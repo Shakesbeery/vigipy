@@ -6,34 +6,11 @@ from scipy.optimize import minimize
 from sympy.functions.special import gamma_functions
 from ..utils.distribution_funcs.negative_binomials import dnbinom, pnbinom
 from ..utils.distribution_funcs.quantile_funcs import quantiles
+
 dnbinom = np.vectorize(dnbinom)
 pnbinom = np.vectorize(pnbinom)
 digamma = np.vectorize(gamma_functions.digamma)
 quantiles = np.vectorize(quantiles)
-
-
-def non_truncated_likelihood(p, n11, E):
-    return np.sum(-np.log((p[4] * dnbinom(n11, prob=p[1]/(p[1]+E), size=p[0])
-                           + (1-p[4]) * dnbinom(n11, prob=p[3]/(p[3]+E),
-                                                size=p[2]))))
-
-
-def truncated_likelihood(p, n11, E, truncate):
-    term1 = (
-             p[4] * dnbinom(n11, size=p[0], prob=p[1]/(p[1]+E))
-             + (1-p[4]) * dnbinom(n11, size=p[2], prob=p[3]/(p[3]+E))
-             )
-
-    term2 = (
-             1-(p[4] * pnbinom(truncate, size=p[0], prob=p[1]/(p[1]+E))
-                + (1-p[4]) * pnbinom(truncate, size=p[2], prob=p[3]/(p[3]+E)))
-             )
-
-    return np.sum(-np.log(term1 / term2))
-
-
-def compute_expected_counts(N, n1j, ni1):
-    return n1j * ni1 / N
 
 
 def gps(container, relative_risk=1, min_events=1, decision_metric='fdr',
@@ -133,13 +110,9 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='fdr',
     qdb2 = dnbinom(n11, size=priors[2], prob=priors[3]/(priors[3] + expected))
     Qn = (priors[4] * qdb1 / (priors[4] * qdb1 + (1-priors[4]) * qdb2))
 
-    posterior_probability = (Qn
-                             * gdtr(relative_risk,
-                                    priors[0] + n11, priors[1] + expected)
-                             + (1-Qn)
-                             * gdtr(relative_risk,
-                                    priors[2] + n11, priors[3] + expected)
-                             )
+    gd1 = gdtr(relative_risk, priors[0] + n11, priors[1] + expected)
+    gd2 = gdtr(relative_risk, priors[2] + n11, priors[3] + expected)
+    posterior_probability = Qn * gd1 + (1-Qn) * gd2
 
     dg1 = digamma(priors[0]+n11)
     dgterm1 = dg1 - np.log(priors[1] + expected)
@@ -273,6 +246,28 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='fdr',
     RES.num_signals = num_signals
 
     return RES
+
+
+def non_truncated_likelihood(p, n11, E):
+    dnb1 = dnbinom(n11, prob=p[1]/(p[1]+E), size=p[0])
+    dnb2 = dnbinom(n11, prob=p[3]/(p[3]+E), size=p[2])
+    return np.sum(-np.log((p[4] * dnb1 + (1-p[4]) * dnb2)))
+
+
+def truncated_likelihood(p, n11, E, truncate):
+    dnb1 = dnbinom(n11, size=p[0], prob=p[1]/(p[1]+E))
+    dnb2 = dnbinom(n11, size=p[2], prob=p[3]/(p[3]+E))
+    term1 = (p[4] * dnb1 + (1-p[4]) * dnb2)
+
+    pnb1 = pnbinom(truncate, size=p[0], prob=p[1]/(p[1]+E))
+    pnb2 = pnbinom(truncate, size=p[2], prob=p[3]/(p[3]+E))
+    term2 = (1-(p[4] * pnb1 + (1-p[4]) * pnb2))
+
+    return np.sum(-np.log(term1 / term2))
+
+
+def compute_expected_counts(N, n1j, ni1):
+    return n1j * ni1 / N
 
 
 class ResultContainer():

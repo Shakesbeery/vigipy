@@ -73,11 +73,10 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='fdr',
         r1 = 1 + n11
         r2b = N - n11 - 1 + (2+N)**2 / (q1*p1)
         # Calculate the Information Criterion
-        IC = numpy.asarray((numpy.log(2)**-1) * (digamma(r1) -
-                                                 digamma(r1+r2b) -
-                                                 (digamma(p1) - digamma(p1+p2)
-                                                 + digamma(q1) - digamma(q1+q2)
-                                                  )),
+        digamma_term = (digamma(r1) - digamma(r1+r2b) -
+                        (digamma(p1) - digamma(p1+p2)
+                         + digamma(q1) - digamma(q1+q2)))
+        IC = numpy.asarray((numpy.log(2)**-1) * digamma_term,
                            dtype=numpy.float64)
         IC_variance = numpy.asarray((numpy.log(2)**-2) *
                                     (trigamma(r1) - trigamma(r1+r2b) +
@@ -110,8 +109,8 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='fdr',
         posterior_prob = []
         lower_bound = []
         for m in range(num_cell):
-            p = numpy.random.dirichlet([g11[m], g10[m], g01[m], g00[m]],
-                                       int(num_MC))
+            alpha = [g11[m], g10[m], g01[m], g00[m]]
+            p = numpy.random.dirichlet(alpha, int(num_MC))
             p11 = p[:, 0]
             p1_ = p11 + p[:, 1]
             p_1 = p11 + p[:, 2]
