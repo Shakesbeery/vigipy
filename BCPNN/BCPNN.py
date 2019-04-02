@@ -2,19 +2,16 @@ import numpy
 import pandas as pd
 from scipy.stats import norm
 from sympy.functions.special import gamma_functions
-from ..utils.Container import Container
+from ..utils import Container
+from ..utils import calculate_expected
 
 digamma = numpy.vectorize(gamma_functions.digamma)
 trigamma = numpy.vectorize(gamma_functions.trigamma)
 
 
-def _compute_expected_counts(N, n1j, ni1):
-    return n1j * ni1 / N
-
-
-def bcpnn(container, relative_risk=1, min_events=1, decision_metric='fdr',
-          decision_thres=0.05, ranking_statistic='p_value', MC=False,
-          num_MC=10000):
+def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
+          decision_thres=0.05, ranking_statistic='quantile', MC=False,
+          num_MC=10000, expected_method='mantel-haentzel', method_alpha=1):
     '''
     A Bayesian Confidence Propogation Neural Network. Note on variable
     naming conventions:
@@ -58,7 +55,8 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='fdr',
     n11 = numpy.asarray(DATA['events'], dtype=numpy.float64)
     n1j = numpy.asarray(DATA['product_aes'], dtype=numpy.float64)
     ni1 = numpy.asarray(DATA['count_across_brands'], dtype=numpy.float64)
-    E = _compute_expected_counts(N, n1j, ni1)
+    E = calculate_expected(N, n1j, ni1, n11, expected_method,
+                                  method_alpha)
 
     n10 = n1j - n11
     n01 = ni1 - n11

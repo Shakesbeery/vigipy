@@ -2,15 +2,13 @@ import numpy as np
 import pandas as pd
 from ..utils.lbe import lbe
 from scipy.stats import fisher_exact, hypergeom
-from ..utils.Container import Container
-
-
-def _compute_expected_counts(N, n1j, ni1):
-    return n1j * ni1 / N
+from ..utils import Container
+from ..utils import calculate_expected
 
 
 def rfet(container, relative_risk=1, min_events=1, decision_metric='fdr',
-         decision_thres=0.05, mid_pval=False):
+         decision_thres=0.05, mid_pval=False,
+         expected_method='mantel-haentzel', method_alpha=1):
     '''
     Calculate the proportional reporting ratio.
 
@@ -40,7 +38,8 @@ def rfet(container, relative_risk=1, min_events=1, decision_metric='fdr',
     n1j = np.asarray(DATA['product_aes'], dtype=np.float64)
     ni1 = np.asarray(DATA['count_across_brands'], dtype=np.float64)
     num_cell = len(n11)
-    expected = _compute_expected_counts(N, n1j, ni1)
+    expected = calculate_expected(N, n1j, ni1, n11, expected_method,
+                                  method_alpha)
 
     n10 = n1j - n11
     n01 = ni1 - n11

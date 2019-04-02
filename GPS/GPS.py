@@ -1,9 +1,11 @@
 ﻿import pandas as pd
 import numpy as np
-from ..utils.Container import Container
 from scipy.special import gdtr
 from scipy.optimize import minimize
 from sympy.functions.special import gamma_functions
+
+from ..utils import Container
+from ..utils import calculate_expected
 from ..utils.distribution_funcs.negative_binomials import dnbinom, pnbinom
 from ..utils.distribution_funcs.quantile_funcs import quantiles
 
@@ -13,12 +15,12 @@ digamma = np.vectorize(gamma_functions.digamma)
 quantiles = np.vectorize(quantiles)
 
 
-def gps(container, relative_risk=1, min_events=1, decision_metric='fdr',
-        decision_thres=0.05, ranking_statistic='p_value', truncate=False,
+def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
+        decision_thres=0.05, ranking_statistic='log2', truncate=False,
         truncate_thres=1,
         prior_init={'alpha1': 0.2041, 'beta1': 0.05816, 'alpha2': 1.415,
                     'beta2': 1.838, 'w': 0.0969},
-        prior_param=None):
+        prior_param=None, expected_method='mantel-haentzel', method_alpha=1):
     '''
     A multi-item gamma poisson shrinker algo for disproportionality analysis
 
@@ -63,7 +65,8 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='fdr',
     n11 = np.asarray(DATA['events'], dtype=np.float64)
     n1j = np.asarray(DATA['product_aes'], dtype=np.float64)
     ni1 = np.asarray(DATA['count_across_brands'], dtype=np.float64)
-    expected = compute_expected_counts(N, n1j, ni1)
+    expected = calculate_expected(N, n1j, ni1, n11, expected_method,
+                                  method_alpha)
     p_out = True
 
     if prior_param is None:
@@ -130,7 +133,7 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='fdr',
     elif ranking_statistic == 'quantile':
         RankStat = LB
     elif ranking_statistic == 'log2':
-        RankStat = [x.evalf() for x in EBlog2]
+        RankStat = np.array([x.evalf() for x in EBlog2])
 
     post_cumsum = np.cumsum(posterior_probability)
     post_1_cumsum = np.cumsum(1-posterior_probability)
@@ -145,7 +148,7 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='fdr',
         FDR = (post_cumsum / post_range)
         FNR = np.array(list(reversed(post_1_cumsum))) / (num_cell - post_range)
         Se = np.cumsum((1-posterior_probability)) / post_1_sum
-        Sp = np.array(list(reversed(post_cumsum)) / (num_cell - post_1_sum))
+        Sp = np.array(list(reversed(post_cumsum))) / (num_cell - post_1_sum)
 
     # Number of signals according to the decision rule (pp/FDR/Nb of Signals)
 
@@ -229,6 +232,7 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='fdr',
                                         'FNR': FNR,
                                         'Se': Se,
                                         'Sp': Sp,
+                                        'LowerBound': LB,
                                         'posterior_probability':
                                         posterior_probability})
         RES.all_signals = RES.all_signals.sort_values(by=[sorter],
@@ -264,10 +268,6 @@ def truncated_likelihood(p, n11, E, truncate):
     term2 = (1-(p[4] * pnb1 + (1-p[4]) * pnb2))
 
     return np.sum(-np.log(term1 / term2))
-
-
-def compute_expected_counts(N, n1j, ni1):
-    return n1j * ni1 / N
 
 
 class ResultContainer():

@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from .utils.Container import Container
+from .Container import Container
 
 
 def convert(data_frame, margin_threshold=1):
