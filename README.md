@@ -1,6 +1,6 @@
 # vigiPy
 
-vigiPy is a project to bring modern disproportionality analyses and pharmacovigilance techniques into the Python ecosystem with a simple, intuitive interface. All major disproportionality functions are adapted and extended versions from Ismail Ahmed and Antoine Poncet's [amazing work](https://cran.r-project.org/web/packages/PhViD/index.html). Top-level functions:
+vigiPy is a project to bring modern disproportionality analyses and pharmacovigilance techniques into the Python ecosystem with a simple, intuitive interface. Many of the disproportionality functions are adapted and extended versions from Ismail Ahmed and Antoine Poncet's [amazing work](https://cran.r-project.org/web/packages/PhViD/index.html). Top-level functions:
 
 * bcpnn() - Bayesian confidence propogation neural network
 * gps() - Multi-item gamma poisson shrinker
@@ -19,7 +19,7 @@ vigiPy is a project to bring modern disproportionality analyses and pharmacovigi
 * pandas
 * numpy
 * scipy
-* sympy
+* sympy (>=1.3)
 
 ### Installation
 
