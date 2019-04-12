@@ -19,7 +19,7 @@ vigiPy is a project to bring modern disproportionality analyses and pharmacovigi
 * pandas
 * numpy
 * scipy
-* sympy (>=1.3)
+* sympy >=1.3
 * statsmodels
 * patsy >= 0.5.1
 
@@ -64,6 +64,12 @@ for timestamp, result in LM.results:
     print("Signals produced prior to {0}:".format(timestamp))
     print(result.signals.head())
 ```
+
+## TODO
+
+* Create a data set for demonstrating usage more thoroughly and to run tests
+* Improve high-level documentation of the methods and their parameters
+* Integrate with mmappy and spotlight (coming soon) for an end-to-end device surveillance/pharmacovigilance pipeline
 
 ## Authors
 
