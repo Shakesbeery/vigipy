@@ -20,6 +20,8 @@ vigiPy is a project to bring modern disproportionality analyses and pharmacovigi
 * numpy
 * scipy
 * sympy
+* statsmodels
+* patsy >= 0.5.1
 
 ### Installation
 

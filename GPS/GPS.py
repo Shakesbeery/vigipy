@@ -24,6 +24,8 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
     '''
     A multi-item gamma poisson shrinker algo for disproportionality analysis
 
+    Arguments:
+
         container: A DataContainer object produced by the convert()
                     function from data_prep.py
 
@@ -49,11 +51,17 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
         truncate_thres: Threshold for hyper parameter calculations
 
         prior_init (dict): The priors for multi-item gamma poisson shrinkage.
-                          By default they are the priors from DuMouchel's
-                          1999 paper.
+                        By default they are the priors from DuMouchel's
+                        1999 paper.
 
         prior_param: Chosen hyper parameters. Default uses maximization
                     of marginal likelihood
+
+        expected_method: The method of calculating the expected counts for
+                        the disproportionality analysis.
+
+        method_alpha: If the expected_method is negative-binomial, this
+                    parameter is the alpha parameter of the distribution.
 
     '''
     priors = np.asarray([prior_init['alpha1'], prior_init['beta1'],

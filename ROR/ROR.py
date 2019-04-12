@@ -31,6 +31,12 @@ def ror(container, relative_risk=1, min_events=1, decision_metric='fdr',
                             {'p_value' = posterior prob of the null hypothesis,
                             'CI' = 95% CI lower boundary}
 
+        expected_method: The method of calculating the expected counts for
+                        the disproportionality analysis.
+
+        method_alpha: If the expected_method is negative-binomial, this
+                    parameter is the alpha parameter of the distribution.
+
     '''
     DATA = container.data
     N = container.N

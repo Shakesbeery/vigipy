@@ -13,14 +13,7 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
           decision_thres=0.05, ranking_statistic='quantile', MC=False,
           num_MC=10000, expected_method='mantel-haentzel', method_alpha=1):
     '''
-    A Bayesian Confidence Propogation Neural Network. Note on variable
-    naming conventions:
-    nXX - XX refers to the (i,j) indices of a 2x2 contingency table
-          combining product and adverse events as the counts.
-          Products are used as rows and AEs as columns.
-            For example:
-                n11 = events related to a product/AE combo
-                n1j = All events related to that particular product
+    A Bayesian Confidence Propogation Neural Network. 
 
     Arguments:
         container: A DataContainer object produced by the convert()
@@ -44,6 +37,12 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
         MC (Bool): Use Monte Carlo simulations to make results more robust?
 
         num_mc (int): Number of MC simulations to run
+
+        expected_method: The method of calculating the expected counts for
+                        the disproportionality analysis.
+
+        method_alpha: If the expected_method is negative-binomial, this
+                    parameter is the alpha parameter of the distribution.
 
     '''
     DATA = container.data
