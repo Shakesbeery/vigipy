@@ -107,7 +107,7 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
         code_convergence = p_out.message
 
     if min_events > 1:
-        DATA = DATA[DATA.n11 >= min_events]
+        DATA = DATA[DATA.events >= min_events]
         expected = expected[n11 >= min_events]
         n1j = n1j[n11 >= min_events]
         ni1 = ni1[n11 >= min_events]
@@ -149,9 +149,9 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
     post_range = np.arange(1, len(posterior_probability)+1)
     if ranking_statistic == 'p_value':
         FDR = (post_cumsum / np.array(post_range))
-        FNR = np.array(list(reversed(post_1_cumsum))) / (num_cell - post_range)
+        FNR = np.array(post_1_cumsum) / (num_cell - post_range)
         Se = np.cumsum((1-posterior_probability)) / post_1_sum
-        Sp = np.array(list(reversed(post_cumsum))) / (num_cell - post_1_sum)
+        Sp = np.array(post_cumsum) / (num_cell - post_1_sum)
     else:
         FDR = (post_cumsum / post_range)
         FNR = np.array(list(reversed(post_1_cumsum))) / (num_cell - post_range)
@@ -252,7 +252,7 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
         num_signals -= 1
     else:
         num_signals = 0
-    RES.signals = RES.all_signals.loc[0:num_signals, ]
+    RES.signals = RES.all_signals.iloc[0:num_signals, ]
 
     # Number of signals
     RES.num_signals = num_signals

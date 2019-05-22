@@ -174,7 +174,7 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
                                        'FDR': FDR,
                                        'FNR': FNR,
                                        'Se': Se,
-                                       'Sp': Sp}).sort_values(by=[sorter])
+                                       'Sp': Sp}, index=np.arange(len(n11))).sort_values(by=[sorter])
     else:
         RC.all_signals = pd.DataFrame({'Product': name,
                                        'Adverse Event': ae,
@@ -187,7 +187,7 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
                                        'FDR': FDR,
                                        'FNR': FNR,
                                        'Se': Se,
-                                       'Sp': Sp}).sort_values(by=[sorter],
+                                       'Sp': Sp}, index=numpy.arange(len(n11))).sort_values(by=[sorter],
                                                               ascending=False)
 
     # List of Signals generated according to the decision_thres
@@ -196,7 +196,7 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
         num_signals -= 1
     else:
         num_signals = 0
-    RC.signals = RC.all_signals.loc[0:num_signals, ]
+    RC.signals = RC.all_signals.iloc[0:num_signals, ]
 
     # Number of signals
     RC.num_signals = num_signals

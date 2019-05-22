@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
@@ -42,7 +43,7 @@ def ror(container, relative_risk=1, min_events=1, decision_metric='fdr',
     N = container.N
 
     if min_events > 1:
-        DATA = DATA.loc[DATA.events >= min_events]
+        DATA = DATA[DATA.events >= min_events]
 
     n11 = np.asarray(DATA['events'], dtype=np.float64)
     n1j = np.asarray(DATA['product_aes'], dtype=np.float64)
@@ -52,7 +53,7 @@ def ror(container, relative_risk=1, min_events=1, decision_metric='fdr',
                                   method_alpha)
 
     n10 = n1j - n11
-    n01 = ni1 - n11
+    n01 = ni1 - n11 + 1e-7
     n00 = N - (n11 + n10 + n01)
 
     log_ror = np.log(n11*n00 / (n10*n01))
@@ -62,7 +63,9 @@ def ror(container, relative_risk=1, min_events=1, decision_metric='fdr',
     pval_uni[pval_uni > 1] = 1
     pval_uni[pval_uni < 0] = 0
 
-    results = lbe(2*np.minimum(pval_uni, 1-pval_uni))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        results = lbe(2*np.minimum(pval_uni, 1-pval_uni))
     pi_c = results[1]
 
     fdr = (pi_c * np.sort(pval_uni[pval_uni <= .5]) /
@@ -97,21 +100,21 @@ def ror(container, relative_risk=1, min_events=1, decision_metric='fdr',
             num_signals = (RankStat >= decision_thres).sum()
 
     RC = Container()
-    RC.all_signals = pd.DataFrame({'Product': DATA['product_name'],
-                                   'Adverse Event': DATA['ae_name'],
+    RC.all_signals = pd.DataFrame({'Product': DATA['product_name'].values,
+                                   'Adverse Event': DATA['ae_name'].values,
                                    'Count': n11,
                                    'Expected Count': expected,
                                    'p_value': RankStat,
                                    'PRR': np.exp(log_ror),
                                    'product margin': n1j,
                                    'event margin': ni1,
-                                   'FDR': FDR}).sort_values(by=['p_value'])
+                                   'FDR': FDR}, index=np.arange(len(n11))).sort_values(by=['p_value'])
 
     if ranking_statistic == 'CI':
         RC.all_signals.rename(index=str,
                               columns={'p_value': 'lower_bound_CI(95%)'},
                               inplace=True).sort()
 
-    RC.signals = RC.all_signals.loc[0:num_signals, ]
+    RC.signals = RC.all_signals.iloc[0:num_signals, ]
     RC.num_signals = num_signals
     return RC

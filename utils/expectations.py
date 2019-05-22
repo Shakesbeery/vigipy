@@ -92,7 +92,7 @@ def __stats_method(n1j, ni1, n11, family):
                           Consider utilizing the negative-binomial family instead of poisson.\n
                           Cameron-Trivedi alpha: {0:5.4f}, CI: ({1}, {2})""".format(alpha, lb, ub))
 
-    return model.predict(data[['prod_events', 'ae_events']])
+    return model.predict(data[['prod_events', 'ae_events']]).values
 
 
 def calculate_expected(N, n1j, ni1, n11, method='mantel-haentzel', alpha=1):
