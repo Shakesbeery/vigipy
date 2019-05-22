@@ -1,6 +1,6 @@
-# vigiPy
+# vigipy
 
-vigiPy is a project to bring modern disproportionality analyses and pharmacovigilance techniques into the Python ecosystem with a simple, intuitive interface. Many of the disproportionality functions are adapted and extended versions from Ismail Ahmed and Antoine Poncet's [amazing work](https://cran.r-project.org/web/packages/PhViD/index.html). Top-level functions:
+vigipy is a project to bring modern disproportionality analyses and pharmacovigilance techniques into the Python ecosystem with a simple, intuitive interface. Many of the disproportionality functions are adapted and extended versions from Ismail Ahmed and Antoine Poncet's [amazing work](https://cran.r-project.org/web/packages/PhViD/index.html). Top-level functions:
 
 * bcpnn() - Bayesian confidence propogation neural network
 * gps() - Multi-item gamma poisson shrinker
@@ -14,7 +14,7 @@ vigiPy is a project to bring modern disproportionality analyses and pharmacovigi
 
 ### Dependencies
 
-#### For vigiPy
+#### For vigipy
 
 * pandas
 * numpy
@@ -32,7 +32,7 @@ If there is ever any interest, I'll create the necessary setup files.
 ### Load data and apply model
 
 ```python
-from vigiPy import *
+from vigipy import *
 import pandas as pd
 
 #This is expected to have columns: ['AE', 'name', 'count'] ('date' is optional for longitudinal models)
@@ -47,7 +47,7 @@ results.signals.to_excel('possible_signals.xlsx', index=False)
 
 ### Making any model longitudinal:
 ```python
-from vigiPy import *
+from vigipy import *
 import pandas as pd
 
 df = pd.read_csv('AE_count_data.csv')
