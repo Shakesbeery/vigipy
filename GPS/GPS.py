@@ -149,12 +149,12 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
     post_range = np.arange(1, len(posterior_probability)+1)
     if ranking_statistic == 'p_value':
         FDR = (post_cumsum / np.array(post_range))
-        FNR = np.array(post_1_cumsum) / (num_cell - post_range)
+        FNR = np.array(post_1_cumsum) / ((num_cell - post_range)+1e-7)
         Se = np.cumsum((1-posterior_probability)) / post_1_sum
         Sp = np.array(post_cumsum) / (num_cell - post_1_sum)
     else:
         FDR = (post_cumsum / post_range)
-        FNR = np.array(list(reversed(post_1_cumsum))) / (num_cell - post_range)
+        FNR = np.array(list(reversed(post_1_cumsum))) / ((num_cell - post_range)+1e-7)
         Se = np.cumsum((1-posterior_probability)) / post_1_sum
         Sp = np.array(list(reversed(post_cumsum))) / (num_cell - post_1_sum)
 

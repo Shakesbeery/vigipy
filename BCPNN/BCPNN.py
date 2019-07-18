@@ -127,7 +127,7 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
         FDR = ((numpy.cumsum(posterior_prob) /
                 numpy.arange(1, len(posterior_prob)+1)))
         FNR = ((numpy.cumsum(1-posterior_prob)[::-1]) /
-               (num_cell-numpy.arange(1, len(posterior_prob)+1)))
+               (num_cell-numpy.arange(1, len(posterior_prob)+1))+1e-7)
         Se = numpy.cumsum(1-posterior_prob) / (sum(1-posterior_prob))
         Sp = ((numpy.cumsum(posterior_prob)[::-1]) /
               (num_cell - sum(1-posterior_prob)))
@@ -135,7 +135,7 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
         FDR = ((numpy.cumsum(posterior_prob) /
                 numpy.arange(1, len(posterior_prob)+1)))
         FNR = ((numpy.cumsum(1-posterior_prob)[::-1]) /
-               (num_cell - numpy.arange(1, len(posterior_prob)+1)))
+               (num_cell - numpy.arange(1, len(posterior_prob)+1))+1e-7)
         Se = numpy.cumsum((1-posterior_prob)) / (sum(1-posterior_prob))
         Sp = ((numpy.cumsum(posterior_prob)[::-1]) /
               (num_cell - sum(1-posterior_prob)))
