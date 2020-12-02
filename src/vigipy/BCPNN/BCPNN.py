@@ -1,19 +1,19 @@
-import numpy
+import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from sympy.functions.special import gamma_functions
 from ..utils import Container
 from ..utils import calculate_expected
 
-digamma = numpy.vectorize(gamma_functions.digamma)
-trigamma = numpy.vectorize(gamma_functions.trigamma)
+digamma = np.vectorize(gamma_functions.digamma)
+trigamma = np.vectorize(gamma_functions.trigamma)
 
 
 def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
           decision_thres=0.05, ranking_statistic='quantile', MC=False,
           num_MC=10000, expected_method='mantel-haentzel', method_alpha=1):
     '''
-    A Bayesian Confidence Propogation Neural Network. 
+    A Bayesian Confidence Propogation Neural Network.
 
     Arguments:
         container: A DataContainer object produced by the convert()
@@ -51,11 +51,11 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
     if min_events > 1:
         DATA = DATA.loc[DATA.events >= min_events]
 
-    n11 = numpy.asarray(DATA['events'], dtype=numpy.float64)
-    n1j = numpy.asarray(DATA['product_aes'], dtype=numpy.float64)
-    ni1 = numpy.asarray(DATA['count_across_brands'], dtype=numpy.float64)
+    n11 = np.asarray(DATA['events'], dtype=np.float64)
+    n1j = np.asarray(DATA['product_aes'], dtype=np.float64)
+    ni1 = np.asarray(DATA['count_across_brands'], dtype=np.float64)
     E = calculate_expected(N, n1j, ni1, n11, expected_method,
-                                  method_alpha)
+                           method_alpha)
 
     n10 = n1j - n11
     n01 = ni1 - n11
@@ -73,16 +73,16 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
         digamma_term = (digamma(r1) - digamma(r1+r2b) -
                         (digamma(p1) - digamma(p1+p2)
                          + digamma(q1) - digamma(q1+q2)))
-        IC = numpy.asarray((numpy.log(2)**-1) * digamma_term,
-                           dtype=numpy.float64)
-        IC_variance = numpy.asarray((numpy.log(2)**-2) *
-                                    (trigamma(r1) - trigamma(r1+r2b) +
-                                    (trigamma(p1) - trigamma(p1+p2) +
-                                     trigamma(q1) - trigamma(q1+q2))),
-                                    dtype=numpy.float64)
-        posterior_prob = norm.cdf(numpy.log(relative_risk),
-                                  IC, numpy.sqrt(IC_variance))
-        lower_bound = norm.ppf(0.025, IC, numpy.sqrt(IC_variance))
+        IC = np.asarray((np.log(2)**-1) * digamma_term,
+                        dtype=np.float64)
+        IC_variance = np.asarray((np.log(2)**-2) *
+                                 (trigamma(r1) - trigamma(r1+r2b) +
+                                 (trigamma(p1) - trigamma(p1+p2) +
+                                  trigamma(q1) - trigamma(q1+q2))),
+                                 dtype=np.float64)
+        posterior_prob = norm.cdf(np.log(relative_risk),
+                                  IC, np.sqrt(IC_variance))
+        lower_bound = norm.ppf(0.025, IC, np.sqrt(IC_variance))
     else:
         num_MC = float(num_MC)
         # Priors for the contingency table
@@ -107,16 +107,16 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
         lower_bound = []
         for m in range(num_cell):
             alpha = [g11[m], g10[m], g01[m], g00[m]]
-            p = numpy.random.dirichlet(alpha, int(num_MC))
+            p = np.random.dirichlet(alpha, int(num_MC))
             p11 = p[:, 0]
             p1_ = p11 + p[:, 1]
             p_1 = p11 + p[:, 2]
-            ic_monte = numpy.log(p11 / (p1_ * p_1))
-            temp = 1*(ic_monte < numpy.log(relative_risk))
+            ic_monte = np.log(p11 / (p1_ * p_1))
+            temp = 1 * (ic_monte < np.log(relative_risk))
             posterior_prob.append(sum(temp)/num_MC)
             lower_bound.append(ic_monte[round(num_MC * 0.025)])
-        posterior_prob = numpy.asarray(posterior_prob)
-        lower_bound = numpy.asarray(lower_bound)
+        posterior_prob = np.asarray(posterior_prob)
+        lower_bound = np.asarray(lower_bound)
 
     if ranking_statistic == 'p_value':
         RankStat = posterior_prob
@@ -124,20 +124,20 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
         RankStat = lower_bound
 
     if ranking_statistic == 'p_value':
-        FDR = ((numpy.cumsum(posterior_prob) /
-                numpy.arange(1, len(posterior_prob)+1)))
-        FNR = ((numpy.cumsum(1-posterior_prob)[::-1]) /
-               (num_cell-numpy.arange(1, len(posterior_prob)+1)+1e-7))
-        Se = numpy.cumsum(1-posterior_prob) / (sum(1-posterior_prob))
-        Sp = ((numpy.cumsum(posterior_prob)[::-1]) /
+        FDR = ((np.cumsum(posterior_prob) /
+                np.arange(1, len(posterior_prob)+1)))
+        FNR = ((np.cumsum(1-posterior_prob)[::-1]) /
+               (num_cell-np.arange(1, len(posterior_prob)+1)+1e-7))
+        Se = np.cumsum(1-posterior_prob) / (sum(1-posterior_prob))
+        Sp = ((np.cumsum(posterior_prob)[::-1]) /
               (num_cell - sum(1-posterior_prob)))
     else:
-        FDR = ((numpy.cumsum(posterior_prob) /
-                numpy.arange(1, len(posterior_prob)+1)))
-        FNR = ((numpy.cumsum(1-posterior_prob)[::-1]) /
-               (num_cell - numpy.arange(1, len(posterior_prob)+1)+1e-7))
-        Se = numpy.cumsum((1-posterior_prob)) / (sum(1-posterior_prob))
-        Sp = ((numpy.cumsum(posterior_prob)[::-1]) /
+        FDR = ((np.cumsum(posterior_prob) /
+                np.arange(1, len(posterior_prob)+1)))
+        FNR = ((np.cumsum(1-posterior_prob)[::-1]) /
+               (num_cell - np.arange(1, len(posterior_prob)+1)+1e-7))
+        Se = np.cumsum((1-posterior_prob)) / (sum(1-posterior_prob))
+        Sp = ((np.cumsum(posterior_prob)[::-1]) /
               (num_cell - sum(1-posterior_prob)))
 
     if decision_metric == 'fdr':
@@ -187,11 +187,12 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
                                        'FDR': FDR,
                                        'FNR': FNR,
                                        'Se': Se,
-                                       'Sp': Sp}, index=numpy.arange(len(n11))).sort_values(by=[sorter],
-                                                              ascending=False)
+                                       'Sp': Sp},
+                                      index=np.arange(len(n11))).sort_values(by=[sorter],
+                                                                             ascending=False)
 
     # List of Signals generated according to the decision_thres
-    RC.all_signals.index = numpy.arange(0, len(RC.all_signals.index))
+    RC.all_signals.index = np.arange(0, len(RC.all_signals.index))
     if num_signals > 0:
         num_signals -= 1
     else:
