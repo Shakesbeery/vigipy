@@ -6,11 +6,12 @@ import pandas as pd
 from .Container import Container
 
 
-def convert(data_frame, margin_threshold=1):
+def convert(data_frame, margin_threshold=1, product_label="name",
+            count_label="count", ae_label="AE"):
     '''
     Convert a Pandas dataframe object into a container class for use
     with the disproportionality analyses. Column names in the DataFrame
-    must include:
+    must include or be specified in the arguments:
         "name" -- A brand/generic name for the product. This module
                     expects that you have already cleaned the data
                     so there is only one name associated with a class.
@@ -31,8 +32,8 @@ def convert(data_frame, margin_threshold=1):
 
     '''
     # Create a contingency table based on the brands and AEs
-    data_cont = pd.pivot_table(data_frame, values='count', index='name',
-                               columns='AE', aggfunc=np.sum, fill_value=0)
+    data_cont = pd.pivot_table(data_frame, values=count_label, index=product_label,
+                               columns=ae_label, aggfunc=np.sum, fill_value=0)
 
     # Calculate empty rows/columns based on margin_threshold and remove
     cut_rows = np.where(np.sum(data_cont, axis=1) < margin_threshold)

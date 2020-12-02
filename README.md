@@ -19,13 +19,26 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 * pandas
 * numpy
 * scipy
-* sympy >=1.3
-* statsmodels >= 0.10.0
-* patsy >= 0.5.1
+* sympy
+* statsmodels
+* patsy
 
 ### Installation
 
-If there is ever any interest, I'll create the necessary setup files.
+To install, navigate to the root directory of the repository and from the command line/terminal run:
+```bash
+python setup.py bdist_wheel
+pip install dist\vigipy-1.0.0-py3-none-any.whl
+```
+
+You should now be able to import the vigipy library in your code.
+
+#### Unit Tests
+From the root directory of the repository, run:
+
+```bash
+python -m unittest discover -s test -p "*Test.py"
+```
 
 ## Usage
 

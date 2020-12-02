@@ -261,9 +261,10 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
 
 
 def non_truncated_likelihood(p, n11, E):
-    dnb1 = dnbinom(n11, prob=p[1]/(p[1]+E), size=p[0])
-    dnb2 = dnbinom(n11, prob=p[3]/(p[3]+E), size=p[2])
-    return np.sum(-np.log((p[4] * dnb1 + (1-p[4]) * dnb2)))
+    dnb1 = np.nan_to_num(dnbinom(n11, prob=p[1]/(p[1]+E), size=p[0]))
+    dnb2 = np.nan_to_num(dnbinom(n11, prob=p[3]/(p[3]+E), size=p[2]))
+    term = (p[4] * dnb1 + (1-p[4]) * dnb2) + 1e-7
+    return np.sum(-np.log(term))
 
 
 def truncated_likelihood(p, n11, E, truncate):

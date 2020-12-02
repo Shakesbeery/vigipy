@@ -64,11 +64,11 @@ def __mh(N, n1j, ni1):
 
 def __stats_method(n1j, ni1, n11, family):
     '''
-    If the expected counts are calculated via a statistical model, 
+    If the expected counts are calculated via a statistical model,
     this function will do so. Expected counts are considered a
     function of n1j and ni1.
 
-    Arguments: 
+    Arguments:
         n1j (iterable): All adverse events for a single product
         ni1 (iterable): Total count of a particular AE across all products
         n11 (iterable): Total count of a particular AE for a particular product
@@ -81,7 +81,7 @@ def __stats_method(n1j, ni1, n11, family):
     data = pd.DataFrame({'events': n11, 'prod_events': n1j,
                          'ae_events': ni1})
     model = smf.glm(formula='events ~ prod_events+ae_events', data=data,
-                          family=family)
+                    family=family)
     model = model.fit()
 
     if isinstance(family, sm.families.Poisson):
@@ -105,7 +105,7 @@ def calculate_expected(N, n1j, ni1, n11, method='mantel-haentzel', alpha=1):
         ni1 (iterable): Total count of a particular AE across all products
         n11 (iterable): Total count of a particular AE for a particular product
         method (str): The method for calculating the expected counts
-        alpha (float): If using a NegativeBinomial family, alpha is the 
+        alpha (float): If using a NegativeBinomial family, alpha is the
                        parameter of that distribution.
 
     Returns:
@@ -116,9 +116,9 @@ def calculate_expected(N, n1j, ni1, n11, method='mantel-haentzel', alpha=1):
         assert method in ('mantel-haentzel', 'negative-binomial', 'poisson')
     except AssertionError:
         err_msg = "{0} not a supported method. Please choose from {1}"
-        raise AssertionError(err_msg.format(method,('mantel-haentzel',
-                                                    'negative-binomial',
-                                                    'poisson')))
+        raise AssertionError(err_msg.format(method, ('mantel-haentzel',
+                                                     'negative-binomial',
+                                                     'poisson')))
 
     if method == 'mantel-haentzel':
         return __mh(N, n1j, ni1)
