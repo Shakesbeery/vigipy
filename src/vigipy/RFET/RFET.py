@@ -92,7 +92,7 @@ def rfet(container, relative_risk=1, min_events=1, decision_metric='fdr',
     if decision_metric == 'fdr':
         num_signals = (FDR <= decision_thres).sum()
     elif decision_metric == 'signals':
-        num_signals = min(decision_thres, num_cell)
+        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
     elif decision_metric == 'rank':
         num_signals = (RankStat <= decision_thres).sum()
 
