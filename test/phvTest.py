@@ -52,7 +52,8 @@ class StateOneTest(unittest.TestCase):
 
         LM = LongitudinalModel(df, 'A')
         LM.run(gps, False, decision_metric='rank', ranking_statistic='quantile')
-
+        LM.run(gps, False, decision_metric='signals', ranking_statistic='quantile')
+        LM.run(prr, False, min_events=1, decision_metric='signals', ranking_statistic='CI')
 
 if __name__ == '__main__':
     runner = unittest.TextTestRunner()

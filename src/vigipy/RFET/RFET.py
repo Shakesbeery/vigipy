@@ -105,7 +105,7 @@ def rfet(container, relative_risk=1, min_events=1, decision_metric='fdr',
                                    'PRR': np.exp(log_rfet),
                                    'product margin': n1j,
                                    'event margin': ni1,
-                                   'FDR': FDR}, index=np.arange(len(n11))).sort_values(by=['p_value'])
+                                   'fdr': FDR}, index=np.arange(len(n11))).sort_values(by=['p_value'])
 
     RC.signals = RC.all_signals.iloc[0:num_signals, ]
     RC.num_signals = num_signals

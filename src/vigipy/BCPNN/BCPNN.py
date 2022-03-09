@@ -142,16 +142,13 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
 
     if decision_metric == 'fdr':
         num_signals = (FDR <= decision_thres).sum()
-        sorter = 'FDR'
     elif decision_metric == 'signals':
-        num_signals = min(decision_thres, num_cell)
+        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
     elif decision_metric == 'rank':
         if ranking_statistic == 'p_value':
             num_signals = (RankStat <= decision_thres).sum()
-            sorter = 'posterior_prob'
         elif ranking_statistic == 'quantile':
             num_signals = (RankStat >= decision_thres).sum()
-            sorter = 'Q_0.025(log(IC))'
 
     name = DATA['product_name']
     ae = DATA['ae_name']
@@ -167,28 +164,28 @@ def bcpnn(container, relative_risk=1, min_events=1, decision_metric='rank',
                                        'Adverse Event': ae,
                                        'Count': count,
                                        'Expected Count': E,
-                                       'posterior_prob': RankStat,
+                                       'p_value': RankStat,
                                        'count/expected': (count/E),
                                        'product margin': n1j,
                                        'event margin': ni1,
-                                       'FDR': FDR,
+                                       'fdr': FDR,
                                        'FNR': FNR,
                                        'Se': Se,
-                                       'Sp': Sp}, index=np.arange(len(n11))).sort_values(by=[sorter])
+                                       'Sp': Sp}, index=np.arange(len(n11))).sort_values(by=[ranking_statistic])
     else:
         RC.all_signals = pd.DataFrame({'Product': name,
                                        'Adverse Event': ae,
                                        'Count': count,
                                        'Expected Count': E,
-                                       'Q_0.025(log(IC))': RankStat,
+                                       'quantile': RankStat,
                                        'count/expected': (count/E),
                                        'product margin': n1j,
                                        'event margin': ni1,
-                                       'FDR': FDR,
+                                       'fdr': FDR,
                                        'FNR': FNR,
                                        'Se': Se,
                                        'Sp': Sp},
-                                      index=np.arange(len(n11))).sort_values(by=[sorter],
+                                      index=np.arange(len(n11))).sort_values(by=[ranking_statistic],
                                                                              ascending=False)
 
     # List of Signals generated according to the decision_thres

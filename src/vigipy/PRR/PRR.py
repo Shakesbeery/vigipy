@@ -92,7 +92,7 @@ def prr(container, relative_risk=1, min_events=1, decision_metric='fdr',
     if (decision_metric == 'fdr' and ranking_statistic == 'p_value'):
         num_signals = (FDR <= decision_thres).sum()
     elif (decision_metric == 'signals'):
-        num_signals = min(decision_thres, num_cell)
+        num_signals = min(RankStat <= decision_thres, num_cell)
     elif (decision_metric == 'rank'):
         if ranking_statistic == 'p_value':
             num_signals = (RankStat <= decision_thres).sum()
@@ -108,7 +108,7 @@ def prr(container, relative_risk=1, min_events=1, decision_metric='fdr',
                                    'PRR': np.exp(log_prr),
                                    'product margin': n1j,
                                    'event margin': ni1,
-                                   'FDR': FDR}, index=np.arange(len(n11))).sort_values(by=['p_value'])
+                                   'fdr': FDR}, index=np.arange(len(n11))).sort_values(by=['p_value'])
 
     if ranking_statistic == 'CI':
         RC.all_signals.rename(index=str,

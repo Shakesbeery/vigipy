@@ -162,19 +162,15 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
 
     if decision_metric == 'fdr':
         num_signals = np.sum(FDR <= decision_thres)
-        sorter = 'FDR'
     elif decision_metric == 'signals':
-        num_signals = np.min(decision_thres, num_cell)
+        num_signals = np.min((RankStat <= decision_thres).sum(), num_cell)
     elif decision_metric == 'rank':
         if ranking_statistic == 'p_value':
             num_signals = np.sum(RankStat <= decision_thres)
-            sorter = 'posterior_probability'
         elif ranking_statistic == 'quantile':
             num_signals = np.sum(RankStat >= decision_thres)
-            sorter = "Q_0.05(lambda)"
         elif ranking_statistic == 'log2':
             num_signals = np.sum(RankStat >= decision_thres)
-            sorter = "post E(lambda)"
 
     name = DATA['product_name']
     ae = DATA['ae_name']
@@ -201,49 +197,49 @@ def gps(container, relative_risk=1, min_events=1, decision_metric='rank',
                                         'Adverse Event': ae,
                                         'Count': count,
                                         'Expected Count': expected,
-                                        'posterior_probability': RankStat,
+                                        'p_value': RankStat,
                                         'count/expected': (count/expected),
                                         'product margin': n1j,
                                         'event margin': ni1,
-                                        'FDR': FDR,
+                                        'fdr': FDR,
                                         'FNR': FNR,
                                         'Se': Se,
-                                        'Sp': Sp}).sort_values(by=[sorter])
+                                        'Sp': Sp}).sort_values(by=[ranking_statistic])
 
     elif ranking_statistic == 'quantile':
         RES.all_signals = pd.DataFrame({'Product': name,
                                         'Adverse Event': ae,
                                         'Count': count,
                                         'Expected Count': expected,
-                                        'Q_0.05(lambda)': RankStat,
+                                        'quantile': RankStat,
                                         'count/expected': (count/expected),
                                         'product margin': n1j,
                                         'event margin': ni1,
-                                        'FDR': FDR,
+                                        'fdr': FDR,
                                         'FNR': FNR,
                                         'Se': Se,
                                         'Sp': Sp,
                                         'posterior_probability':
                                         posterior_probability})
-        RES.all_signals = RES.all_signals.sort_values(by=[sorter],
+        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic],
                                                       ascending=False)
     else:
         RES.all_signals = pd.DataFrame({'Product': name,
                                         'Adverse Event': ae,
                                         'Count': count,
                                         'Expected Count': expected,
-                                        'post E(lambda)': RankStat,
+                                        'log2': RankStat,
                                         'count/expected': (count/expected),
                                         'product margin': n1j,
                                         'event margin': ni1,
-                                        'FDR': FDR,
+                                        'fdr': FDR,
                                         'FNR': FNR,
                                         'Se': Se,
                                         'Sp': Sp,
                                         'LowerBound': LB,
-                                        'posterior_probability':
+                                        'p_value':
                                         posterior_probability})
-        RES.all_signals = RES.all_signals.sort_values(by=[sorter],
+        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic],
                                                       ascending=False)
 
     # List of Signals generated according to the method
