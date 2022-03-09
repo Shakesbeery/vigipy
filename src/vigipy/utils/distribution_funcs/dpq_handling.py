@@ -1,18 +1,19 @@
 ﻿import numpy as np
-'''
+
+"""
 A series of short functions used to handle difference in d/p/q functions.
 d - The density function
 p - The distribution function
 q - The quantile function
-'''
+"""
 
 
 def R_D__0(log_p):
-    return -float('Inf') if log_p else 0.0
+    return -float("Inf") if log_p else 0.0
 
 
 def R_D__1(log_p):
-    return 0. if log_p else 1.0
+    return 0.0 if log_p else 1.0
 
 
 def R_D_exp(x, log_p):
