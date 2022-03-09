@@ -111,9 +111,9 @@ def prr(container, relative_risk=1, min_events=1, decision_metric='fdr',
                                    'fdr': FDR}, index=np.arange(len(n11))).sort_values(by=['p_value'])
 
     if ranking_statistic == 'CI':
-        RC.all_signals.rename(index=str,
-                              columns={'p_value': 'lower_bound_CI(95%)'},
-                              inplace=True).sort()
+        RC.all_signals = RC.all_signals.rename(index=str, columns={"p_value": "lower_bound_CI(95%)"}).sort_values(
+            by=["lower_bound_CI(95%)"]
+        )
 
     RC.signals = RC.all_signals.iloc[0:num_signals, ]
     RC.num_signals = num_signals
