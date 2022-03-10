@@ -51,10 +51,7 @@ class StateOneTest(unittest.TestCase):
             for metric in METRICS:
                 for stat in STATS:
                     print(method, metric, stat)
-                    try:
-                        ror(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3)
-                    except Exception as error:
-                        print(error)
+                    ror(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3)
                     print("OK!")
         print("Finished with ROR testing...")
 
