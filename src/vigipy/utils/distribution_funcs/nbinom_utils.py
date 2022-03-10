@@ -14,13 +14,13 @@ def pbeta_raw(x, a, b, lower_tail, log_p=False):
         if a == 0 and b == 0:
             return -M_LN2 if log_p else 0.5
         if a == 0 or a / b == 0:
-            return R_DT_1(log_p)
+            return R_DT_1(lower_tail, log_p)
         if b == 0 or b / a == 0:
-            return R_DT_0(log_p)
+            return R_DT_0(lower_tail, log_p)
         if x < 0.5:
-            return R_DT_0(log_p)
+            return R_DT_0(lower_tail, log_p)
         else:
-            return R_DT_1(log_p)
+            return R_DT_1(lower_tail, log_p)
 
     x1 = 0.5 - x + 0.5
     w, wc, ierr = bratio(a, b, x, x1, log_p)
@@ -47,9 +47,9 @@ def pbeta(x, a, b, lower_tail, log_p):
         return numpy.nan
 
     if x <= 0:
-        return R_DT_0(log_p)
+        return R_DT_0(lower_tail, log_p)
     if x >= 1:
-        return R_DT_1(log_p)
+        return R_DT_1(lower_tail, log_p)
 
     return pbeta_raw(x, a, b, lower_tail, log_p)
 

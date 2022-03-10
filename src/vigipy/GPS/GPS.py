@@ -170,7 +170,7 @@ def gps(
     if decision_metric == "fdr":
         num_signals = np.sum(FDR <= decision_thres)
     elif decision_metric == "signals":
-        num_signals = np.min((RankStat <= decision_thres).sum(), num_cell)
+        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
     elif decision_metric == "rank":
         if ranking_statistic == "p_value":
             num_signals = np.sum(RankStat <= decision_thres)

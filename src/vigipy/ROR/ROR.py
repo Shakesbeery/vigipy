@@ -98,7 +98,7 @@ def ror(
     else:
         RankStat = LB
 
-    if decision_metric == "fdr" and ranking_statistic == "p_value":
+    if decision_metric == "fdr":
         num_signals = (FDR <= decision_thres).sum()
     elif decision_metric == "signals":
         num_signals = min((RankStat <= decision_thres).sum(), num_cell)

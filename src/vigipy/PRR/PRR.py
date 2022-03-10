@@ -101,7 +101,7 @@ def prr(
     if decision_metric == "fdr":
         num_signals = (FDR <= decision_thres).sum()
     elif decision_metric == "signals":
-        num_signals = min(RankStat <= decision_thres, num_cell)
+        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
     elif decision_metric == "rank":
         if ranking_statistic == "p_value":
             num_signals = (RankStat <= decision_thres).sum()

@@ -35,7 +35,12 @@ class StateOneTest(unittest.TestCase):
         global data
 
         print("Starting GPS testing...")
-        gps(data, expected_method="mantel-haentzel", decision_metric="rank", ranking_statistic="p_value", min_events=3)
+        for method in METHODS:
+            for metric in METRICS:
+                for stat in STATS:
+                    print(method, metric, stat)
+                    gps(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3, truncate=True)
+                    print("OK!")
         print("Finished with GPS testing...")
 
     def test3_Ror(self):
@@ -61,7 +66,7 @@ class StateOneTest(unittest.TestCase):
             for metric in METRICS:
                 for stat in STATS:
                     print(method, metric, stat)
-                    rfet(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3)
+                    rfet(data, expected_method=method, decision_metric=metric, min_events=3)
                     print("OK!")
         print("Finished with RFET testing...")
 
@@ -83,13 +88,9 @@ class StateOneTest(unittest.TestCase):
         LM = LongitudinalModel(df, "A")
 
         print("Starting longitudinal model testing...")
-        for method in METHODS:
-            for metric in METRICS:
-                for stat in STATS:
-                    for model in (bcpnn, ror, rfet, prr):
-                        print(method, metric, stat, model.__name__)
-                        LM.run(model, False, expected_method=method, decision_metric=metric, ranking_statistic=stat)
-                        print("OK!")
+        LM.run(gps, False, decision_metric='rank', ranking_statistic='quantile')
+        LM.run(bcpnn, False, decision_metric='signals', ranking_statistic='quantile')
+        LM.run(prr, False, min_events=1, decision_metric='signals', ranking_statistic='p_value')
         print("Finished with longitudinal model testing...")
 
 
