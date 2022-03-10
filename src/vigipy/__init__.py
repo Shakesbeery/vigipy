@@ -6,4 +6,5 @@ from .BCPNN import bcpnn
 from .utils import convert
 from .LongitudinalModel.LongitudinalModel import LongitudinalModel
 
-__all__ = ["prr", "ror", "rfet", "gps", "bcpnn", "convert", "LongitudinalModel"]
+__all__ = ['prr', 'ror', 'rfet', 'gps', 'bcpnn',
+           'convert', 'LongitudinalModel']
