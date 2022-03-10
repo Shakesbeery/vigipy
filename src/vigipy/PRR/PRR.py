@@ -89,7 +89,7 @@ def prr(container, relative_risk=1, min_events=1, decision_metric='fdr',
     else:
         RankStat = LB
 
-    if (decision_metric == 'fdr' and ranking_statistic == 'p_value'):
+    if (decision_metric == 'fdr'):
         num_signals = (FDR <= decision_thres).sum()
     elif (decision_metric == 'signals'):
         num_signals = min(RankStat <= decision_thres, num_cell)
