@@ -8,6 +8,10 @@ df = pd.read_csv("test/fixtures/sample.csv")
 
 data = None
 
+METRICS = ("fdr", "signals", "rank")
+STATS = ("p_value", "quantile")
+METHODS = ("mantel-haentzel", "negative-binomial", "poisson")
+
 
 class StateOneTest(unittest.TestCase):
     def test0_Convert(self):
@@ -18,41 +22,75 @@ class StateOneTest(unittest.TestCase):
 
     def test1_Bcpnn(self):
         global data
-
-        bcpnn(data, min_events=3)
-        bcpnn(data, expected_method="negative-binomial", method_alpha=1.1439, min_events=3)
+        print("Starting BCPNN testing...")
+        for method in METHODS:
+            for metric in METRICS:
+                for stat in STATS:
+                    print(method, metric, stat)
+                    bcpnn(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3)
+                    print("OK!")
+        print("Finished with BCPNN testing...")
 
     def test2_Gps(self):
         global data
 
-        gps(data, min_events=3)
-        gps(data, expected_method="negative-binomial", method_alpha=1.1439, min_events=3)
+        print("Starting GPS testing...")
+        gps(data, expected_method="mantel-haentzel", decision_metric="rank", ranking_statistic="p_value", min_events=3)
+        print("Finished with GPS testing...")
 
     def test3_Ror(self):
         global data
 
-        ror(data, min_events=3)
-        ror(data, expected_method="negative-binomial", method_alpha=1.1439, min_events=3)
+        print("Starting ROR testing...")
+        for method in METHODS:
+            for metric in METRICS:
+                for stat in STATS:
+                    print(method, metric, stat)
+                    try:
+                        ror(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3)
+                    except Exception as error:
+                        print(error)
+                    print("OK!")
+        print("Finished with ROR testing...")
 
     def test4_Rfet(self):
         global data
 
-        rfet(data, min_events=3)
-        rfet(data, expected_method="negative-binomial", method_alpha=1.1439, min_events=3)
+        print("Starting RFET testing...")
+        for method in METHODS:
+            for metric in METRICS:
+                for stat in STATS:
+                    print(method, metric, stat)
+                    rfet(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3)
+                    print("OK!")
+        print("Finished with RFET testing...")
 
     def test5_Prr(self):
         global data
 
-        prr(data, min_events=3)
-        prr(data, expected_method="negative-binomial", method_alpha=1.1439, min_events=3)
+        print("Starting PRR testing...")
+        for method in METHODS:
+            for metric in METRICS:
+                for stat in STATS:
+                    print(method, metric, stat)
+                    prr(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3)
+                    print("OK!")
+        print("Finished with PRR testing...")
 
     def test6_LongModel(self):
         global df
 
         LM = LongitudinalModel(df, "A")
-        LM.run(gps, False, decision_metric="rank", ranking_statistic="quantile")
-        LM.run(gps, False, decision_metric="signals", ranking_statistic="quantile")
-        LM.run(prr, False, min_events=1, decision_metric="signals", ranking_statistic="CI")
+
+        print("Starting longitudinal model testing...")
+        for method in METHODS:
+            for metric in METRICS:
+                for stat in STATS:
+                    for model in (bcpnn, ror, rfet, prr):
+                        print(method, metric, stat, model.__name__)
+                        LM.run(model, False, expected_method=method, decision_metric=metric, ranking_statistic=stat)
+                        print("OK!")
+        print("Finished with longitudinal model testing...")
 
 
 if __name__ == "__main__":

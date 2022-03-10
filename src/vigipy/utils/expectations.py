@@ -86,13 +86,10 @@ def __stats_method(n1j, ni1, n11, family):
         dispersion = model.pearson_chi2 / model.df_resid
         if dispersion > 2:
             alpha, lb, ub = __test_dispersion(model, data)
-            warnings.warn(
-                """Variance does not equal the mean! Data likely overdispersed...\n
-                          Consider utilizing the negative-binomial family instead of poisson.\n
-                          Cameron-Trivedi alpha: {0:5.4f}, CI: ({1}, {2})""".format(
-                    alpha, lb, ub
-                )
-            )
+            warning_string = f"""Variance does not equal the mean! Data likely overdispersed...\n
+                                Consider utilizing the negative-binomial family instead of poisson.\n
+                                Cameron-Trivedi alpha: {alpha:5.4f}, CI: ({lb}, {ub})"""
+            warnings.warn(warning_string)
 
     return model.predict(data[["prod_events", "ae_events"]]).values
 
