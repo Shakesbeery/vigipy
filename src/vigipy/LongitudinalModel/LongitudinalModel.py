@@ -47,6 +47,8 @@ class LongitudinalModel:
                 da_results = model(sub_container, **kwargs)
                 self.results.append((timestamp, da_results))
             except ValueError:
+                if include_gaps:
+                    self.results.append((timestamp, None))
                 print("Insufficient data for this model. Skipping this slice.")
 
     def run_disjoint(self, model, include_gaps=True, **kwargs):
@@ -76,6 +78,8 @@ class LongitudinalModel:
                 da_results = model(sub_container, **kwargs)
                 self.results.append((timestamp, da_results))
             except ValueError:
+                if include_gaps:
+                    self.results.append((timestamp, None))
                 print("Insufficient data for this model. Skipping this slice.")
 
     def regroup_dates(self, time_unit):
