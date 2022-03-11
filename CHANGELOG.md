@@ -2,6 +2,7 @@
 
 ## 1.2.0
 - Added the ability to run a disjoint longitudinal model that does not use cumulative reports during disproportionality analysis
+- Exposed a `test_dispersion` function from vigipy.utils that determines dispersion and alpha values for any data
 
 ## 1.1.0
 - Fixed bug related to bad logic flow when using `signal` as a ranking statistic

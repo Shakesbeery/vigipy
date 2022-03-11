@@ -3,6 +3,7 @@ import unittest
 import pandas as pd
 
 from src.vigipy import bcpnn, gps, ror, rfet, prr, convert, LongitudinalModel
+from src.vigipy.utils import test_dispersion
 
 df = pd.read_csv("test/fixtures/sample.csv")
 
@@ -96,6 +97,15 @@ class StateOneTest(unittest.TestCase):
         LM.run(bcpnn, False, decision_metric="signals", ranking_statistic="quantile")
         LM.run(prr, False, min_events=1, decision_metric="signals", ranking_statistic="p_value")
         print("Finished with longitudinal model testing...")
+
+    def test7_DisjointLM(self):
+        LM.run_disjoint(bcpnn, False, decision_metric="signals", ranking_statistic="quantile")
+
+    def test8_Dispersion(self):
+        res = test_dispersion(df)
+        self.assertTrue(res['dispersion'] > 10)
+        self.assertTrue(res['alpha'] > 1)
+
 
 
 if __name__ == "__main__":
