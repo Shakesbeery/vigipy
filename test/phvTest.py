@@ -93,18 +93,24 @@ class StateOneTest(unittest.TestCase):
         LM = LongitudinalModel(df, "A")
 
         print("Starting longitudinal model testing...")
-        LM.run(gps, False, decision_metric="rank", ranking_statistic="quantile")
+        #LM.run(gps, False, decision_metric="rank", ranking_statistic="quantile")
         LM.run(bcpnn, False, decision_metric="signals", ranking_statistic="quantile")
         LM.run(prr, False, min_events=1, decision_metric="signals", ranking_statistic="p_value")
         print("Finished with longitudinal model testing...")
 
     def test7_DisjointLM(self):
+        LM = LongitudinalModel(df, "A")
+        print("Starting disjoint longitudinal model...")
         LM.run_disjoint(bcpnn, False, decision_metric="signals", ranking_statistic="quantile")
+        print("Finished with disjoint model testing...")
 
     def test8_Dispersion(self):
-        res = test_dispersion(df)
+        global data
+        print("Starting dispersion test...")
+        res = test_dispersion(data)
         self.assertTrue(res["dispersion"] > 10)
         self.assertTrue(res["alpha"] > 1)
+        print("Finished with dispersion calculation.")
 
 
 if __name__ == "__main__":
