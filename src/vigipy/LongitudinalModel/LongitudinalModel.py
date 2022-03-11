@@ -36,8 +36,11 @@ class LongitudinalModel:
         """
         self.results = []
         for timestamp, count in self.date_groups.sum()["count"].iteritems():
-            if count == 0 and not include_gaps:
+            if count == 0:
+                if include_gaps:
+                    self.results.append((timestamp, None))
                 continue
+
             subset = self.data.loc[self.data["date"] <= timestamp]
             sub_container = convert(subset)
             try:
@@ -63,8 +66,11 @@ class LongitudinalModel:
         """
         self.results = []
         for count, (timestamp, subset) in zip(self.date_groups.sum()["count"], self.date_groups):
-            if count == 0 and not include_gaps:
+            if count == 0:
+                if include_gaps:
+                    self.results.append((timestamp, None))
                 continue
+
             sub_container = convert(subset)
             try:
                 da_results = model(sub_container, **kwargs)
