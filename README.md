@@ -58,6 +58,26 @@ results = gps(vigipy_data, min_events=5, decision_metric='rank',
 results.signals.to_excel('possible_signals.xlsx', index=False)
 ```
 
+### Changing Expected Reporting Calculation
+The expected count calculation is an important factor in both the accuracy and stability of any DA algorithm. Vigipy
+support the use of 3 expectation method: mantel-haentzel, poisson, and negative-binomial. Recent research shows
+BCPNN performs very well in most DA scenarios (https://onlinelibrary.wiley.com/doi/10.1002/pds.4970) and that LASSO
+is very robust againt confounding variables. To combine these approaches in vigipy, use the negative-binomial expectation
+argument in BCPNN. In the event of significant dispersion in the data, you can calculate alpha using `test_dispersion`
+
+```python
+from vigipy import convert
+from vigipy.utils import test_dispersion
+
+df = pd.read_csv('AE_count_data.csv')
+data_container = convert(df)
+
+dispersion_data = test_dispersion(data_container)
+alpha = dispersion_data["alpha"] if dispersion_data["dispersion"] > 2 else 1
+
+bcpnn(data_container, expected_method='negative-binomial', method_alpha=alpha, min_events=3)
+```
+
 ### Making any model longitudinal:
 ```python
 from vigipy import *
