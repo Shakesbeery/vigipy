@@ -103,9 +103,8 @@ class StateOneTest(unittest.TestCase):
 
     def test8_Dispersion(self):
         res = test_dispersion(df)
-        self.assertTrue(res['dispersion'] > 10)
-        self.assertTrue(res['alpha'] > 1)
-
+        self.assertTrue(res["dispersion"] > 10)
+        self.assertTrue(res["alpha"] > 1)
 
 
 if __name__ == "__main__":
