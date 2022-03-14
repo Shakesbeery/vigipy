@@ -4,6 +4,8 @@ import pandas as pd
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
+from statsmodels.tools.sm_exceptions import PerfectSeparationError
+
 
 def __cameron_trivedi_dispersion(df_row):
     """
@@ -120,6 +122,14 @@ def calculate_expected(N, n1j, ni1, n11, method="mantel-haentzel", alpha=1):
     if method == "mantel-haentzel":
         return __mh(N, n1j, ni1)
     elif method == "negative-binomial":
-        return __stats_method(n1j, ni1, n11, sm.families.NegativeBinomial(alpha=alpha))
+        try:
+            return __stats_method(n1j, ni1, n11, sm.families.NegativeBinomial(alpha=alpha))
+        except PerfectSeparationError:
+            print("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
+            return __mh(N, n1j, ni1)
     elif method == "poisson":
-        return __stats_method(n1j, ni1, n11, sm.families.Poisson())
+        try:
+            return __stats_method(n1j, ni1, n11, sm.families.Poisson())
+        except PerfectSeparationError:
+            print("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
+            return __mh(N, n1j, ni1)
