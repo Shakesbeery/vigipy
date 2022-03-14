@@ -96,6 +96,29 @@ def __stats_method(n1j, ni1, n11, family):
     return model.predict(data[["prod_events", "ae_events"]]).values
 
 
+def test_dispersion(container):
+    """
+    Return the cameron-trivedi dispersion value and the alpha value for use
+    in a negative-binomial glm. It is recommended you avoid poisson glms when
+    dispersion > 2
+
+    Arguments:
+        container: A DataContainer object produced by the convert()
+                    function from data_prep.py
+
+    Returns:
+        : dict
+            A dictionary with the dispersion value, alpha value, lower bound of the alpha, and the upper bound of the alpha
+
+    """
+    sub_frame = container.data[["events", "product_aes", "count_across_brands"]].copy()
+    model = smf.glm(formula="events ~ product_aes+count_across_brands", data=sub_frame, family=sm.families.Poisson())
+    model = model.fit()
+    dispersion = model.pearson_chi2 / model.df_resid
+    alpha, lb, ub = __test_dispersion(model, sub_frame)
+    return {"dispersion": dispersion, "alpha": alpha, "lb": lb, "ub": ub}
+
+
 def calculate_expected(N, n1j, ni1, n11, method="mantel-haentzel", alpha=1):
     """
     Calculate the expected counts for disproportionality analysis.
