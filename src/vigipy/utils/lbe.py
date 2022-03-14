@@ -39,7 +39,10 @@ def lbe(pvals, a=None, lb=0.05, ci_level=0.95, qvalues=True, fdr_level=0.05, n_s
                 fdr = fdr_level
             else:
                 n_significant = (mat[:, 1] <= fdr_level).sum()
-                fdr = max(np.amax(mat[mat[:, 1] <= fdr_level, 1]), 0)
+                try:
+                    fdr = max(np.amax(mat[mat[:, 1] <= fdr_level, 1]), 0)
+                except ValueError:
+                    print("No data matches the specified FDR threshold. Setting FDR to 0.")
 
         if sdbound > 0.5:
             print(

@@ -125,7 +125,7 @@ def ror(
     ).sort_values(by=["p_value"])
 
     if ranking_statistic == "CI":
-        RC.all_signals = RC.all_signals.rename(index=str, columns={"p_value": "lower_bound_CI(95%)"}).sort_values(
+        RC.all_signals = RC.all_signals.rename(columns={"p_value": "lower_bound_CI(95%)"}).sort_values(
             by=["lower_bound_CI(95%)"]
         )
 
