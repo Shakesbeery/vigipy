@@ -28,6 +28,7 @@ def gps(
     prior_param=None,
     expected_method="mantel-haentzel",
     method_alpha=1,
+    minimization_method="CG"
 ):
     """
     A multi-item gamma poisson shrinker algo for disproportionality analysis
@@ -101,7 +102,7 @@ def gps(
                 n11_c_temp.extend(list(data_cont[col]))
             n11_c = np.asarray(n11_c_temp)
 
-            p_out = minimize(non_truncated_likelihood, x0=priors, args=(n11_c, E_c), options={"maxiter": 500})
+            p_out = minimize(non_truncated_likelihood, x0=priors, args=(n11_c, E_c), options={"maxiter": 500}, method=minimization_method)
         elif truncate:
             truncate = truncate_thres - 1
             p_out = minimize(
@@ -109,9 +110,10 @@ def gps(
                 x0=priors,
                 args=(n11[n11 >= truncate_thres], expected[n11 >= truncate_thres], truncate),
                 options={"maxiter": 500},
+                method=minimization_method
             )
 
-        prior_param = p_out.x
+        priors = p_out.x
         code_convergence = p_out.message
 
     if min_events > 1:
@@ -197,11 +199,11 @@ def gps(
 
     # vector of the final a priori parameters (if p_out=TRUE)
     if p_out:
-        RES.param["prior_param"] = prior_param
+        RES.param["prior_param"] = priors
     # vector of the initial a priori and final a priori parameters
     if not p_out:
         RES.param["prior_init"] = prior_init
-        RES.param["prior_param"] = prior_param
+        RES.param["prior_param"] = priors
         RES.param["convergence"] = code_convergence
 
     # SIGNALS RESULTS and presentation
