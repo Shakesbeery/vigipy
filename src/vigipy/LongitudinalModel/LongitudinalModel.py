@@ -1,5 +1,5 @@
 import pandas as pd
-from ..utils import convert
+from ..utils import convert, convert_binary
 
 
 class LongitudinalModel:
@@ -19,7 +19,13 @@ class LongitudinalModel:
         self.date_groups = dataframe.resample(time_unit, on="date")
         self.data = dataframe
 
-    def run(self, model, include_gaps=True, **kwargs):
+    def _convert(self, data, use_binary):
+        if use_binary:
+            return convert_binary(data)
+    
+        return convert(data)
+
+    def run(self, model, include_gaps=True, use_binary=False, **kwargs):
         """
         Run the longitudinal model as initialized.
 
@@ -42,7 +48,7 @@ class LongitudinalModel:
                 continue
 
             subset = self.data.loc[self.data["date"] <= timestamp]
-            sub_container = convert(subset)
+            sub_container = self._convert(subset, use_binary)
             try:
                 da_results = model(sub_container, **kwargs)
                 self.results.append((timestamp, da_results))
@@ -51,7 +57,7 @@ class LongitudinalModel:
                     self.results.append((timestamp, None))
                 print("Insufficient data for this model. Skipping this slice.")
 
-    def run_disjoint(self, model, include_gaps=True, **kwargs):
+    def run_disjoint(self, model, include_gaps=True, use_binary=False, **kwargs):
         """
         Run the longitudinal model as initialized.
 
@@ -73,7 +79,7 @@ class LongitudinalModel:
                     self.results.append((timestamp, None))
                 continue
 
-            sub_container = convert(subset)
+            sub_container = self._convert(subset, use_binary)
             try:
                 da_results = model(sub_container, **kwargs)
                 self.results.append((timestamp, da_results))

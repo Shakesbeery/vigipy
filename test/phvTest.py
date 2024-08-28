@@ -2,8 +2,8 @@ import unittest
 
 import pandas as pd
 
-from src.vigipy import bcpnn, gps, ror, rfet, prr, convert, LongitudinalModel
-from src.vigipy.utils import test_dispersion
+from ..src.vigipy import bcpnn, gps, ror, rfet, prr, lasso, convert, convert_binary, LongitudinalModel
+from ..src.vigipy.utils import test_dispersion
 
 df = pd.read_csv("test/fixtures/sample.csv")
 
@@ -20,6 +20,7 @@ class StateOneTest(unittest.TestCase):
         global data
 
         data = convert(df)
+        bin_data = convert_binary(df)
 
     def test1_Bcpnn(self):
         global data
@@ -86,6 +87,14 @@ class StateOneTest(unittest.TestCase):
                     prr(data, expected_method=method, decision_metric=metric, ranking_statistic=stat, min_events=3)
                     print("OK!")
         print("Finished with PRR testing...")
+
+    def test_lasso(self):
+        global bin_data
+        lasso(bin_data, 0.1, min_events=3, num_bootstrap=10, ci=95, use_lars=True, use_IC=False, IC_criterion="bic", **kwargs)
+        for crit in ("aic", "bic"):
+            lasso(bin_data, 0.1, min_events=3, num_bootstrap=10, ci=95, use_lars=False, use_IC=True, IC_criterion=crit, **kwargs)
+
+        lasso(bin_data, 0.1, min_events=3, num_bootstrap=50, ci=95, use_lars=False, use_IC=False, IC_criterion="bic", **kwargs)
 
     def test6_LongModel(self):
         global df

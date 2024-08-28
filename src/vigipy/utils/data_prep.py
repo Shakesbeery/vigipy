@@ -32,7 +32,7 @@ def convert(data_frame, margin_threshold=1, product_label="name", count_label="c
     """
     # Create a contingency table based on the brands and AEs
     data_cont = pd.pivot_table(
-        data_frame, values=count_label, index=product_label, columns=ae_label, aggfunc=np.sum, fill_value=0
+        data_frame, values=count_label, index=product_label, columns=ae_label, aggfunc="sum", fill_value=0
     )
 
     # Calculate empty rows/columns based on margin_threshold and remove
@@ -57,6 +57,26 @@ def convert(data_frame, margin_threshold=1, product_label="name", count_label="c
     DC.N = data_df["events"].sum()
     return DC
 
+def convert_binary(data, product_label="name", ae_label="AE"):
+    """Convert input data consisting of unique product-event pairs into a
+       binary dataframe indicating which event and which product are
+       associated with each other.
+
+    Args:
+        data (pd.DataFrame): A DataFrame consisting of unique product-event pairs for each row
+        product_label (str, optional): If the product name is not in a column called `name`, override here. Defaults to "name".
+        ae_label (str, optional): If the adverse event is not in a column called `AE`, override here.. Defaults to "AE".
+
+    Returns:
+        Container: A container with two binary dataframes. One is the X data of product names and the other is the 
+        y data with adverse events. Index locations are associated with the input DataFrame.
+
+    """
+    DC = Container()
+    DC.product_features = pd.get_dummies(data[product_label]).groupby(level=0).max() * 1
+    DC.event_outcomes = pd.get_dummies(data[ae_label]).groupby(level=0).max() * 1
+    DC.N = data.shape[0]
+    return DC
 
 def count(data, rows, cols):
     """
