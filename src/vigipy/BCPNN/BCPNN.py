@@ -65,8 +65,6 @@ def bcpnn(
     ni1 =DATA["count_across_brands"].to_numpy(dtype=np.float64)
     E = calculate_expected(N, n1j, ni1, n11, expected_method, method_alpha)
 
-    print(DATA)
-
     n10 = n1j - n11
     n01 = ni1 - n11
     n00 = N - (n11 + n10 + n01)
