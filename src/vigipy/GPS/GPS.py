@@ -14,6 +14,7 @@ pnbinom = np.vectorize(pnbinom)
 digamma = np.vectorize(gamma_functions.digamma)
 quantiles = np.vectorize(quantiles)
 
+EPS = np.finfo(np.float32).eps
 
 def gps(
     container,
@@ -113,7 +114,9 @@ def gps(
                 method=minimization_method
             )
 
-        priors = p_out.x
+        priors = np.where(p_out.x < 0, EPS, p_out.x)
+        if priors[4] > 1:
+            priors[4] = 1
         code_convergence = p_out.message
 
     if min_events > 1:
@@ -156,6 +159,7 @@ def gps(
     post_1_cumsum = np.cumsum(1 - posterior_probability)
     post_1_sum = sum(1 - posterior_probability)
     post_range = np.arange(1, len(posterior_probability) + 1)
+
     if ranking_statistic == "p_value":
         FDR = post_cumsum / np.array(post_range)
         FNR = np.array(post_1_cumsum) / ((num_cell - post_range) + 1e-7)
@@ -168,7 +172,6 @@ def gps(
         Sp = np.array(list(reversed(post_cumsum))) / (num_cell - post_1_sum)
 
     # Number of signals according to the decision rule (pp/FDR/Nb of Signals)
-
     if decision_metric == "fdr":
         num_signals = np.sum(FDR <= decision_thres)
     elif decision_metric == "signals":
@@ -185,7 +188,6 @@ def gps(
     ae = DATA["ae_name"]
     count = n11
     RES = Container(params=True)
-
     # list of the parameters used
     RES.input_param = (
         relative_risk,
@@ -282,6 +284,9 @@ def gps(
 
 
 def non_truncated_likelihood(p, n11, E):
+    p = np.where(p < 0, EPS, p)
+    if p[4] > 1:
+        p[4] = 1
     dnb1 = np.nan_to_num(dnbinom(n11, prob=p[1] / (p[1] + E), size=p[0]))
     dnb2 = np.nan_to_num(dnbinom(n11, prob=p[3] / (p[3] + E), size=p[2]))
     term = (p[4] * dnb1 + (1 - p[4]) * dnb2) + 1e-7
@@ -289,6 +294,9 @@ def non_truncated_likelihood(p, n11, E):
 
 
 def truncated_likelihood(p, n11, E, truncate):
+    p = np.where(p < 0, EPS, p)
+    if p[4] > 1:
+        p[4] = 1
     dnb1 = dnbinom(n11, size=p[0], prob=p[1] / (p[1] + E))
     dnb2 = dnbinom(n11, size=p[2], prob=p[3] / (p[3] + E))
     term1 = p[4] * dnb1 + (1 - p[4]) * dnb2

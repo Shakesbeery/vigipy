@@ -1,4 +1,5 @@
 import pandas as pd
+import traceback
 from ..utils import convert, convert_binary
 
 
@@ -11,7 +12,7 @@ class LongitudinalModel:
             dataframe (Pandas DataFrame): A dataframe containing counts, AEs,
                                           product/brands and AE dates.
 
-            time_unit (str): One of Pandas' time unit aliases. (Q, A, QS, etc.)
+            time_unit (str): One of Pandas' time unit aliases found here: https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#offset-aliases
 
         """
         self.time_unit = time_unit
@@ -41,7 +42,7 @@ class LongitudinalModel:
 
         """
         self.results = []
-        for timestamp, count in self.date_groups.sum()["count"].iteritems():
+        for timestamp, count in self.date_groups.sum()["count"].items():
             if count == 0:
                 if include_gaps:
                     self.results.append((timestamp, None))
@@ -52,7 +53,8 @@ class LongitudinalModel:
             try:
                 da_results = model(sub_container, **kwargs)
                 self.results.append((timestamp, da_results))
-            except ValueError:
+            except ValueError as e:
+                print(traceback.print_exc())
                 if include_gaps:
                     self.results.append((timestamp, None))
                 print("Insufficient data for this model. Skipping this slice.")
