@@ -60,10 +60,12 @@ def bcpnn(
     if min_events > 1:
         DATA = DATA.loc[DATA.events >= min_events]
 
-    n11 = np.asarray(DATA["events"], dtype=np.float64)
-    n1j = np.asarray(DATA["product_aes"], dtype=np.float64)
-    ni1 = np.asarray(DATA["count_across_brands"], dtype=np.float64)
+    n11 = DATA["events"].to_numpy(dtype=np.float64)
+    n1j = DATA["product_aes"].to_numpy(dtype=np.float64)
+    ni1 =DATA["count_across_brands"].to_numpy(dtype=np.float64)
     E = calculate_expected(N, n1j, ni1, n11, expected_method, method_alpha)
+
+    print(DATA)
 
     n10 = n1j - n11
     n01 = ni1 - n11
@@ -177,9 +179,9 @@ def bcpnn(
                 "FNR": FNR,
                 "Se": Se,
                 "Sp": Sp,
-            },
-            index=np.arange(len(n11)),
+            }
         ).sort_values(by=[ranking_statistic])
+        RC.signals = RC.all_signals.loc[RC.all_signals[ranking_statistic] <= decision_thres]
     else:
         RC.all_signals = pd.DataFrame(
             {
@@ -195,19 +197,14 @@ def bcpnn(
                 "FNR": FNR,
                 "Se": Se,
                 "Sp": Sp,
-            },
-            index=np.arange(len(n11)),
+            }
         ).sort_values(by=[ranking_statistic], ascending=False)
+        RC.signals = RC.all_signals.loc[RC.all_signals[ranking_statistic] >= decision_thres]
 
-    # List of Signals generated according to the decision_thres
-    RC.all_signals.index = np.arange(0, len(RC.all_signals.index))
     if num_signals > 0:
         num_signals -= 1
     else:
         num_signals = 0
-    RC.signals = RC.all_signals.iloc[
-        0:num_signals,
-    ]
 
     # Number of signals
     RC.num_signals = num_signals

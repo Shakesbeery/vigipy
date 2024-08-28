@@ -73,7 +73,7 @@ def lbe(pvals, a=None, lb=0.05, ci_level=0.95, qvalues=True, fdr_level=0.05, n_s
 
 
 def lbe_a(m, l):
-    aopt = max(1, minimize(asearch, [1], bounds=[(0.3, 25)], args=(m, l)).x, method="CG")
+    aopt = max(1, minimize(asearch, [1], bounds=[(0.3, 25)], args=(m, l), method="CG").x)
     return aopt
 
 
