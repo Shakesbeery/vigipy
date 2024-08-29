@@ -127,6 +127,26 @@ convert_binary(data, product_label=["name", "name2"])
 
 The same can also be done for adverse events if they are organied in columns instead of by rows.
 
+
+### Experimental features
+There is currently an experimental function for creating multi-item dataframes where we want to control
+for the presence of possible drug/device interactions.
+
+```python
+from vigipy.utils.data_prep import convert_multi_item
+
+# Takes an arbitrary number of column names that correspond to co-occurring drugs/devices/etc.
+convert_multi_item(data, product_cols=["name", "name2", "name3"], ae_col="AE")
+```
+
+***Note:*** The output has some assumptions:
+* `count_across_brands` - This assumes that we increment the total adverse event count one time for each product associated with the AE. For example, *Infection* occurs one time, but has two products in that row: Strattice and Pelvisoft. *Infection* will therefore be counted as 2. That is to say, Strattice and Pelvisoft both have 1 report each of this AE and the count will reflect this, even though the event itself is unique.
+* `product_aes` - This column of data is a straight summation of the number of times the product occurs in the provided columns.
+* `events` - The event tally for each product-AE combo is calculated based on the intermediate representation of each multi-item entry in the "product_combo" column. 
+
+The generated container object will contain all parts expected by the main DA algorithms, so code modifications should not be necessary.
+
+
 ## TODO
 
 * Create a data set for demonstrating usage more thoroughly and to run tests

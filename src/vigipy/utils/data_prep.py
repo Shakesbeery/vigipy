@@ -1,4 +1,5 @@
-﻿import itertools
+﻿from itertools import product, chain, combinations
+from collections import defaultdict, Counter
 
 import numpy as np
 import pandas as pd
@@ -30,6 +31,21 @@ def convert(data_frame, margin_threshold=1, product_label="name", count_label="c
                                     components for DA.
 
     """
+    data_cont = compute_contingency(data_frame, product_label, count_label, ae_label, margin_threshold)
+    col_sums = np.sum(data_cont, axis=0)
+    row_sums = np.sum(data_cont, axis=1)
+
+    # Compute the flattened table from the contingency table.
+    data_df = count(data_cont, row_sums, col_sums)
+
+    # Initialize the container object and assign the data
+    DC = Container()
+    DC.contingency = data_cont
+    DC.data = data_df
+    DC.N = data_df["events"].sum()
+    return DC
+
+def compute_contingency(data_frame, product_label, count_label, ae_label, margin_threshold):
     # Create a contingency table based on the brands and AEs
     data_cont = pd.pivot_table(
         data_frame, values=count_label, index=product_label, columns=ae_label, aggfunc="sum", fill_value=0
@@ -44,18 +60,8 @@ def convert(data_frame, margin_threshold=1, product_label="name", count_label="c
 
     data_cont = data_cont.drop(drop_rows)
     data_cont = data_cont.drop(drop_cols, axis=1)
-    col_sums = np.sum(data_cont, axis=0)
-    row_sums = np.sum(data_cont, axis=1)
-
-    # Compute the flattened table from the contingency table.
-    data_df = count(data_cont, row_sums, col_sums)
-
-    # Initialize the container object and assign the data
-    DC = Container()
-    DC.contingency = data_cont
-    DC.data = data_df
-    DC.N = data_df["events"].sum()
-    return DC
+    return data_cont
+    
 
 def convert_binary(data, product_label="name", ae_label="AE"):
     """Convert input data consisting of unique product-event pairs into a
@@ -81,6 +87,57 @@ def convert_binary(data, product_label="name", ae_label="AE"):
     DC.N = data.shape[0]
     return DC
 
+
+def convert_multi_item(df, product_cols=["name"], ae_col="AE", min_threshold=3):
+    """ ***WARNING*** Currently experimental and not guaranteed to perform as expected.
+    Convert data with multiple product columns into a multi-item flattened dataframe for the DA methods.
+
+    Args:
+        df (pd.DataFrame): A dataframe where each row is a unique adverse event and has multiple columns
+        indicating the presence of multiple devices/drugs/interventions. 
+        target_cols (list, optional): A list of column names associated with the co-occuring products. Defaults to ["name"].
+        ae_col (str, optional): The column name that contains the adverse events. Defaults to "AE".
+
+    Returns:
+        _type_: _description_
+    """
+    ae_counts = Counter()
+    product_counts = Counter()
+    for col in product_cols:
+        product_counts.update(Counter(df[col]))
+        ae_counts.update(Counter(df.loc[df[col] != ""][ae_col]))
+
+    # Initialize an empty list to store the result
+    result = []
+    
+    # Iterate over each row in the dataframe
+    for _, row in df.iterrows():
+        # Extract product names from the current row
+        names = {row[x] for x in product_cols if row[x]}
+        # Get all unique combinations of names (without repetition)
+        combos = list(chain.from_iterable(combinations(names, r) for r in range(1, len(names)+1)))
+        # Append combinations to the result list with the other column info
+        for combo in combos:
+            new_data = {idx: row[idx] for idx in row.index if idx not in product_cols}
+            new_data["product_name"] = f"{'|'.join([c for c in combo if c])}"
+            new_data["product_aes"] = sum([product_counts[p] for p in combo])
+            new_data["count_across_brands"] = ae_counts[row[ae_col]]
+            result.append(new_data)
+
+    # Convert the result list to a new dataframe
+    new_df = pd.DataFrame(result)
+    event_series = new_df.groupby(by=["AE", "product_name"]).sum()["count"]
+    new_df["events"] = new_df.apply(lambda x: event_series[x["AE"]][x["product_name"]], axis=1)
+    new_df.rename(columns={ae_col: "ae_name"}, inplace=True)
+
+    DC = Container()
+    DC.contingency = compute_contingency(new_df, "product_name", "count", "ae_name", min_threshold)
+    DC.data = new_df[["ae_name", "product_name", "count_across_brands", "product_aes", "events"]].drop_duplicates()
+    DC.N = new_df["events"].sum()
+    
+    return DC
+
+
 def count(data, rows, cols):
     """
     Convert the input contingency table to a flattened table
@@ -93,7 +150,7 @@ def count(data, rows, cols):
 
     """
     d = {"events": [], "product_aes": [], "count_across_brands": [], "ae_name": [], "product_name": []}
-    for col, row in itertools.product(data.columns, data.index):
+    for col, row in product(data.columns, data.index):
         n11 = data[col][row]
         if n11 > 0:
             d["count_across_brands"].append(cols[col])
@@ -104,3 +161,4 @@ def count(data, rows, cols):
 
     df = pd.DataFrame(d)
     return df
+
