@@ -73,8 +73,11 @@ def convert_binary(data, product_label="name", ae_label="AE"):
 
     """
     DC = Container()
-    DC.product_features = pd.get_dummies(data[product_label]).groupby(level=0).max() * 1
-    DC.event_outcomes = pd.get_dummies(data[ae_label]).groupby(level=0).max() * 1
+    prod_df = pd.get_dummies(data[product_label], prefix='', prefix_sep='')
+    DC.product_features = prod_df.groupby(by=prod_df.columns, axis=1).sum()
+
+    event_df = pd.get_dummies(data[ae_label], prefix='', prefix_sep='')
+    DC.event_outcomes = event_df.groupby(by=event_df.columns, axis=1).sum()
     DC.N = data.shape[0]
     return DC
 

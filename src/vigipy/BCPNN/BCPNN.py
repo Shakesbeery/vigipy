@@ -54,6 +54,9 @@ def bcpnn(
                     parameter is the alpha parameter of the distribution.
 
     """
+    input_params = locals()
+    del input_params["container"]
+
     DATA = container.data
     N = container.N
 
@@ -157,9 +160,9 @@ def bcpnn(
     name = DATA["product_name"]
     ae = DATA["ae_name"]
     count = n11
-    RC = Container()
+    RC = Container(params=True)
 
-    RC.input_param = (relative_risk, min_events, decision_metric, decision_thres, ranking_statistic)
+    RC.param["input_params"] = input_params
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":

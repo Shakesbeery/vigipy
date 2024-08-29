@@ -1,5 +1,6 @@
 ﻿import pandas as pd
 import numpy as np
+import warnings
 from scipy.special import gdtr
 from scipy.optimize import minimize
 from sympy.functions.special import gamma_functions
@@ -15,6 +16,7 @@ digamma = np.vectorize(gamma_functions.digamma)
 quantiles = np.vectorize(quantiles)
 
 EPS = np.finfo(np.float32).eps
+BOUNDED_METHODS = {"Nelder-Mead", "L-BFGS-B", "TNC", "SLSQP", "Powell", "trust-constr", "COBYLA", "COBYQA"}
 
 def gps(
     container,
@@ -29,7 +31,9 @@ def gps(
     prior_param=None,
     expected_method="mantel-haentzel",
     method_alpha=1,
-    minimization_method="CG"
+    minimization_method="CG",
+    minimization_bounds=((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10),(0, 1)),
+    minimization_options = None
 ):
     """
     A multi-item gamma poisson shrinker algo for disproportionality analysis
@@ -67,13 +71,20 @@ def gps(
         prior_param: Chosen hyper parameters. Default uses maximization
                     of marginal likelihood
 
-        expected_method: The method of calculating the expected counts for
+        expected_method (str): The method of calculating the expected counts for
                         the disproportionality analysis.
 
-        method_alpha: If the expected_method is negative-binomial, this
+        method_alpha (float): If the expected_method is negative-binomial, this
                     parameter is the alpha parameter of the distribution.
 
+        minimization_method (str): The minimization method to use for `scipy.optimize.minimize()`
+
+        minimization_bounds (tuple): An iterable of bounds to constrain the parameter space 
+
     """
+    input_params = locals()
+    del input_params["container"]
+
     priors = np.asarray(
         [prior_init["alpha1"], prior_init["beta1"], prior_init["alpha2"], prior_init["beta2"], prior_init["w"]]
     )
@@ -88,6 +99,11 @@ def gps(
 
     if prior_param is None:
         p_out = False
+        if minimization_method not in BOUNDED_METHODS:
+            minimization_bounds = None
+
+        if minimization_options is None:
+            minimization_options = {}
 
         if not truncate:
             data_cont = container.contingency
@@ -103,7 +119,7 @@ def gps(
                 n11_c_temp.extend(list(data_cont[col]))
             n11_c = np.asarray(n11_c_temp)
 
-            p_out = minimize(non_truncated_likelihood, x0=priors, args=(n11_c, E_c), options={"maxiter": 500}, method=minimization_method)
+            p_out = minimize(non_truncated_likelihood, x0=priors, args=(n11_c, E_c), options={"maxiter": 500}, method=minimization_method, bounds=minimization_bounds, **minimization_options)
         elif truncate:
             truncate = truncate_thres - 1
             p_out = minimize(
@@ -111,12 +127,14 @@ def gps(
                 x0=priors,
                 args=(n11[n11 >= truncate_thres], expected[n11 >= truncate_thres], truncate),
                 options={"maxiter": 500},
-                method=minimization_method
+                method=minimization_method,
+                bounds=minimization_bounds,
+                **minimization_options
             )
 
-        priors = np.where(p_out.x < 0, EPS, p_out.x)
-        if priors[4] > 1:
-            priors[4] = 1
+        priors = p_out.x
+        if np.any(priors < 0) or priors[4] > 1:
+            warnings.warn(f"Calculated priors violate distribution constraints. Alpha and Beta parameters should be >0 and mixture weight should be >=0 and <=1. Current priors: {priors}. Numerical instability likely during processing. Considering using a minimization method that supports bounds.")
         code_convergence = p_out.message
 
     if min_events > 1:
@@ -189,24 +207,10 @@ def gps(
     count = n11
     RES = Container(params=True)
     # list of the parameters used
-    RES.input_param = (
-        relative_risk,
-        min_events,
-        decision_metric,
-        decision_thres,
-        ranking_statistic,
-        truncate,
-        truncate_thres,
-    )
-
-    # vector of the final a priori parameters (if p_out=TRUE)
-    if p_out:
-        RES.param["prior_param"] = priors
-    # vector of the initial a priori and final a priori parameters
-    if not p_out:
-        RES.param["prior_init"] = prior_init
-        RES.param["prior_param"] = priors
-        RES.param["convergence"] = code_convergence
+    RES.param["input_params"] = input_params
+    RES.param["prior_init"] = prior_init
+    RES.param["prior_param"] = priors
+    RES.param["convergence"] = code_convergence
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":
@@ -284,9 +288,6 @@ def gps(
 
 
 def non_truncated_likelihood(p, n11, E):
-    p = np.where(p < 0, EPS, p)
-    if p[4] > 1:
-        p[4] = 1
     dnb1 = np.nan_to_num(dnbinom(n11, prob=p[1] / (p[1] + E), size=p[0]))
     dnb2 = np.nan_to_num(dnbinom(n11, prob=p[3] / (p[3] + E), size=p[2]))
     term = (p[4] * dnb1 + (1 - p[4]) * dnb2) + 1e-7
@@ -294,9 +295,6 @@ def non_truncated_likelihood(p, n11, E):
 
 
 def truncated_likelihood(p, n11, E, truncate):
-    p = np.where(p < 0, EPS, p)
-    if p[4] > 1:
-        p[4] = 1
     dnb1 = dnbinom(n11, size=p[0], prob=p[1] / (p[1] + E))
     dnb2 = dnbinom(n11, size=p[2], prob=p[3] / (p[3] + E))
     term1 = p[4] * dnb1 + (1 - p[4]) * dnb2
@@ -307,21 +305,3 @@ def truncated_likelihood(p, n11, E, truncate):
 
     return np.sum(-np.log(term1 / term2))
 
-
-class ResultContainer:
-    def __init__(self, empty=False):
-        self.input_param = None
-        self.all_signals = None
-        self.signals = None
-        self.num_signals = None
-        self.param = {}
-        self.empty = empty
-
-    def export(self, name, index=False):
-        writer = pd.ExcelWriter(name)
-        if not self.empty:
-            self.signals.to_excel(writer, "Signals", index=index)
-            self.all_signals.to_excel(writer, "ALL_Signals", index=index)
-            writer.save()
-        else:
-            pd.DataFrame().to_excel(writer, "No Candidates")

@@ -5,7 +5,7 @@ import numpy as np
 
 from ..utils import Container
 
-def lasso(container, alpha, min_events=3, num_bootstrap=10, ci=95, use_lars=False, use_IC=False, IC_criterion="bic", lasso_kwargs=None):
+def lasso(container, alpha=0.5, min_events=3, num_bootstrap=10, ci=95, use_lars=False, use_IC=False, IC_criterion="bic", lasso_kwargs=None):
     """The LASSO algorithm for product-event pair signal detection. This function supports vanilla LASSO, LASSO using LARS and
     LASSO using the IC to determine alpha values.
 

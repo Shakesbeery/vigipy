@@ -50,14 +50,8 @@ class LongitudinalModel:
 
             subset = self.data.loc[self.data["date"] <= timestamp]
             sub_container = self._convert(subset, use_binary)
-            try:
-                da_results = model(sub_container, **kwargs)
-                self.results.append((timestamp, da_results))
-            except ValueError as e:
-                print(traceback.print_exc())
-                if include_gaps:
-                    self.results.append((timestamp, None))
-                print("Insufficient data for this model. Skipping this slice.")
+            self._run_model(model, sub_container, timestamp, include_gaps, kwargs)
+            
 
     def run_disjoint(self, model, include_gaps=True, use_binary=False, **kwargs):
         """
@@ -82,13 +76,18 @@ class LongitudinalModel:
                 continue
 
             sub_container = self._convert(subset, use_binary)
-            try:
-                da_results = model(sub_container, **kwargs)
-                self.results.append((timestamp, da_results))
-            except ValueError:
-                if include_gaps:
-                    self.results.append((timestamp, None))
-                print("Insufficient data for this model. Skipping this slice.")
+            self._run_model(model, sub_container, timestamp, include_gaps, kwargs)
+
+    def _run_model(self, model, sub_container, timestamp, include_gaps, kwargs):
+        try:
+            da_results = model(sub_container, **kwargs)
+            self.results.append((timestamp, da_results))
+        except ValueError as e:
+            print(traceback.format_exc())
+            if include_gaps:
+                self.results.append((timestamp, None))
+            print("Insufficient data for this model. Skipping this slice.")
+
 
     def regroup_dates(self, time_unit):
         """
