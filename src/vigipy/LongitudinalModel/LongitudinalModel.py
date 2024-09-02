@@ -23,7 +23,7 @@ class LongitudinalModel:
     def _convert(self, data, use_binary):
         if use_binary:
             return convert_binary(data)
-    
+
         return convert(data)
 
     def run(self, model, include_gaps=True, use_binary=False, **kwargs):
@@ -51,7 +51,6 @@ class LongitudinalModel:
             subset = self.data.loc[self.data["date"] <= timestamp]
             sub_container = self._convert(subset, use_binary)
             self._run_model(model, sub_container, timestamp, include_gaps, kwargs)
-            
 
     def run_disjoint(self, model, include_gaps=True, use_binary=False, **kwargs):
         """
@@ -69,7 +68,9 @@ class LongitudinalModel:
 
         """
         self.results = []
-        for count, (timestamp, subset) in zip(self.date_groups.sum()["count"], self.date_groups):
+        for count, (timestamp, subset) in zip(
+            self.date_groups.sum()["count"], self.date_groups
+        ):
             if count == 0:
                 if include_gaps:
                     self.results.append((timestamp, None))
@@ -87,7 +88,6 @@ class LongitudinalModel:
             if include_gaps:
                 self.results.append((timestamp, None))
             print("Insufficient data for this model. Skipping this slice.")
-
 
     def regroup_dates(self, time_unit):
         """

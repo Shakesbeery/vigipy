@@ -5,7 +5,18 @@ import numpy as np
 
 from ..utils import Container
 
-def lasso(container, alpha=0.5, min_events=3, num_bootstrap=10, ci=95, use_lars=False, use_IC=False, IC_criterion="bic", lasso_kwargs=None):
+
+def lasso(
+    container,
+    alpha=0.5,
+    min_events=3,
+    num_bootstrap=10,
+    ci=95,
+    use_lars=False,
+    use_IC=False,
+    IC_criterion="bic",
+    lasso_kwargs=None,
+):
     """The LASSO algorithm for product-event pair signal detection. This function supports vanilla LASSO, LASSO using LARS and
     LASSO using the IC to determine alpha values.
 
@@ -31,7 +42,7 @@ def lasso(container, alpha=0.5, min_events=3, num_bootstrap=10, ci=95, use_lars=
     if lasso_kwargs is None:
         lasso_kwargs = dict()
 
-    #Set type of LASSO per user inputs
+    # Set type of LASSO per user inputs
     if use_IC:
         lasso = LassoLarsIC(criterion=IC_criterion, **lasso_kwargs)
     elif use_lars:
@@ -39,7 +50,7 @@ def lasso(container, alpha=0.5, min_events=3, num_bootstrap=10, ci=95, use_lars=
     else:
         lasso = Lasso(alpha=alpha, **lasso_kwargs)
 
-    #Iterate over adverse events using product as features for DA
+    # Iterate over adverse events using product as features for DA
     for column in ys.columns:
         y = ys[column].values
         if y.sum() < min_events:
@@ -50,30 +61,32 @@ def lasso(container, alpha=0.5, min_events=3, num_bootstrap=10, ci=95, use_lars=
                 res["CI Lower"].append(0)
                 res["CI Upper"].append(0)
             continue
-        
+
         lasso.fit(X, y)
         all_coefs = lasso.coef_.copy()
 
         # Initialize a list to store bootstrap coefficients
         bootstrap_coefficients = []
-        
+
         # Bootstrap resampling
         for _ in range(num_bootstrap):
             # Sample with replacement
-            bootstrap_sample_indices = np.random.choice(range(len(ys)), size=len(ys), replace=True)
+            bootstrap_sample_indices = np.random.choice(
+                range(len(ys)), size=len(ys), replace=True
+            )
             X_bootstrap = X.iloc[bootstrap_sample_indices]
             y_bootstrap = y[bootstrap_sample_indices]
-        
+
             # Fit LASSO model to bootstrap sample
             lasso.fit(X_bootstrap, y_bootstrap)
             bootstrap_coefficients.append(lasso.coef_.copy())
-        
+
         bootstrap_coefficients = np.array(bootstrap_coefficients)
-        
+
         # Calculate confidence intervals for each coefficient
         ci_lower = np.percentile(bootstrap_coefficients, (100 - ci), axis=0)
-        ci_upper = np.percentile(bootstrap_coefficients,  ci, axis=0)
-        
+        ci_upper = np.percentile(bootstrap_coefficients, ci, axis=0)
+
         for product, co, ci_u, ci_l in zip(X.columns, all_coefs, ci_upper, ci_lower):
             res["Product"].append(product)
             res["Adverse Event"].append(column)
@@ -89,6 +102,6 @@ def lasso(container, alpha=0.5, min_events=3, num_bootstrap=10, ci=95, use_lars=
     RES.signals = RES.all_signals.loc[RES.all_signals["CI Lower"] > 0]
 
     # Number of signals
-    RES.num_signals = len( RES.signals)
-        
+    RES.num_signals = len(RES.signals)
+
     return RES

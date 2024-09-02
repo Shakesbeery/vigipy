@@ -112,7 +112,11 @@ def test_dispersion(container):
 
     """
     sub_frame = container.data[["events", "product_aes", "count_across_brands"]].copy()
-    model = smf.glm(formula="events ~ product_aes+count_across_brands", data=sub_frame, family=sm.families.Poisson())
+    model = smf.glm(
+        formula="events ~ product_aes+count_across_brands",
+        data=sub_frame,
+        family=sm.families.Poisson(),
+    )
     model = model.fit()
     dispersion = model.pearson_chi2 / model.df_resid
     alpha, lb, ub = __test_dispersion(model, sub_frame)
@@ -140,19 +144,27 @@ def calculate_expected(N, n1j, ni1, n11, method="mantel-haentzel", alpha=1):
         assert method in ("mantel-haentzel", "negative-binomial", "poisson")
     except AssertionError:
         err_msg = "{0} not a supported method. Please choose from {1}"
-        raise AssertionError(err_msg.format(method, ("mantel-haentzel", "negative-binomial", "poisson")))
+        raise AssertionError(
+            err_msg.format(method, ("mantel-haentzel", "negative-binomial", "poisson"))
+        )
 
     if method == "mantel-haentzel":
         return __mh(N, n1j, ni1)
     elif method == "negative-binomial":
         try:
-            return __stats_method(n1j, ni1, n11, sm.families.NegativeBinomial(alpha=alpha))
+            return __stats_method(
+                n1j, ni1, n11, sm.families.NegativeBinomial(alpha=alpha)
+            )
         except PerfectSeparationError:
-            print("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
+            print(
+                "Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation."
+            )
             return __mh(N, n1j, ni1)
     elif method == "poisson":
         try:
             return __stats_method(n1j, ni1, n11, sm.families.Poisson())
         except PerfectSeparationError:
-            print("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
+            print(
+                "Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation."
+            )
             return __mh(N, n1j, ni1)
