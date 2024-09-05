@@ -1,5 +1,6 @@
 import pandas as pd
-from ..utils import convert
+import traceback
+from ..utils import convert, convert_binary
 
 
 class LongitudinalModel:
@@ -11,7 +12,7 @@ class LongitudinalModel:
             dataframe (Pandas DataFrame): A dataframe containing counts, AEs,
                                           product/brands and AE dates.
 
-            time_unit (str): One of Pandas' time unit aliases. (Q, A, QS, etc.)
+            time_unit (str): One of Pandas' time unit aliases found here: https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#offset-aliases
 
         """
         self.time_unit = time_unit
@@ -19,7 +20,13 @@ class LongitudinalModel:
         self.date_groups = dataframe.resample(time_unit, on="date")
         self.data = dataframe
 
-    def run(self, model, include_gaps=True, **kwargs):
+    def _convert(self, data, use_binary):
+        if use_binary:
+            return convert_binary(data)
+
+        return convert(data)
+
+    def run(self, model, include_gaps=True, use_binary=False, **kwargs):
         """
         Run the longitudinal model as initialized.
 
@@ -35,23 +42,17 @@ class LongitudinalModel:
 
         """
         self.results = []
-        for timestamp, count in self.date_groups.sum()["count"].iteritems():
+        for timestamp, count in self.date_groups.sum()["count"].items():
             if count == 0:
                 if include_gaps:
                     self.results.append((timestamp, None))
                 continue
 
             subset = self.data.loc[self.data["date"] <= timestamp]
-            sub_container = convert(subset)
-            try:
-                da_results = model(sub_container, **kwargs)
-                self.results.append((timestamp, da_results))
-            except ValueError:
-                if include_gaps:
-                    self.results.append((timestamp, None))
-                print("Insufficient data for this model. Skipping this slice.")
+            sub_container = self._convert(subset, use_binary)
+            self._run_model(model, sub_container, timestamp, include_gaps, kwargs)
 
-    def run_disjoint(self, model, include_gaps=True, **kwargs):
+    def run_disjoint(self, model, include_gaps=True, use_binary=False, **kwargs):
         """
         Run the longitudinal model as initialized.
 
@@ -67,20 +68,26 @@ class LongitudinalModel:
 
         """
         self.results = []
-        for count, (timestamp, subset) in zip(self.date_groups.sum()["count"], self.date_groups):
+        for count, (timestamp, subset) in zip(
+            self.date_groups.sum()["count"], self.date_groups
+        ):
             if count == 0:
                 if include_gaps:
                     self.results.append((timestamp, None))
                 continue
 
-            sub_container = convert(subset)
-            try:
-                da_results = model(sub_container, **kwargs)
-                self.results.append((timestamp, da_results))
-            except ValueError:
-                if include_gaps:
-                    self.results.append((timestamp, None))
-                print("Insufficient data for this model. Skipping this slice.")
+            sub_container = self._convert(subset, use_binary)
+            self._run_model(model, sub_container, timestamp, include_gaps, kwargs)
+
+    def _run_model(self, model, sub_container, timestamp, include_gaps, kwargs):
+        try:
+            da_results = model(sub_container, **kwargs)
+            self.results.append((timestamp, da_results))
+        except ValueError as e:
+            print(traceback.format_exc())
+            if include_gaps:
+                self.results.append((timestamp, None))
+            print("Insufficient data for this model. Skipping this slice.")
 
     def regroup_dates(self, time_unit):
         """

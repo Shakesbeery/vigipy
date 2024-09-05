@@ -75,7 +75,11 @@ def prr(
         warnings.simplefilter("ignore")
         results = lbe(2 * np.minimum(pval_uni, 1 - pval_uni), fdr_level=fdr_threshold)
     pi_c = results[1]
-    fdr = pi_c * np.sort(pval_uni[pval_uni <= 0.5]) / (np.arange(1, (pval_uni <= 0.5).sum() + 1) / num_cell)
+    fdr = (
+        pi_c
+        * np.sort(pval_uni[pval_uni <= 0.5])
+        / (np.arange(1, (pval_uni <= 0.5).sum() + 1) / num_cell)
+    )
 
     fdr = np.concatenate(
         (
@@ -126,12 +130,10 @@ def prr(
     ).sort_values(by=["p_value"])
 
     if ranking_statistic == "CI":
-        RC.all_signals = RC.all_signals.rename(columns={"p_value": "lower_bound_CI(95%)"}).sort_values(
-            by=["lower_bound_CI(95%)"]
-        )
+        RC.all_signals = RC.all_signals.rename(
+            columns={"p_value": "lower_bound_CI(95%)"}
+        ).sort_values(by=["lower_bound_CI(95%)"])
 
-    RC.signals = RC.all_signals.iloc[
-        0:num_signals,
-    ]
+    RC.signals = RC.all_signals.iloc[0:num_signals,]
     RC.num_signals = num_signals
     return RC

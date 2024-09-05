@@ -1,5 +1,6 @@
 ﻿import pandas as pd
 import numpy as np
+import warnings
 from scipy.special import gdtr
 from scipy.optimize import minimize
 from sympy.functions.special import gamma_functions
@@ -14,6 +15,18 @@ pnbinom = np.vectorize(pnbinom)
 digamma = np.vectorize(gamma_functions.digamma)
 quantiles = np.vectorize(quantiles)
 
+EPS = np.finfo(np.float32).eps
+BOUNDED_METHODS = {
+    "Nelder-Mead",
+    "L-BFGS-B",
+    "TNC",
+    "SLSQP",
+    "Powell",
+    "trust-constr",
+    "COBYLA",
+    "COBYQA",
+}
+
 
 def gps(
     container,
@@ -24,11 +37,19 @@ def gps(
     ranking_statistic="log2",
     truncate=False,
     truncate_thres=1,
-    prior_init={"alpha1": 0.2041, "beta1": 0.05816, "alpha2": 1.415, "beta2": 1.838, "w": 0.0969},
+    prior_init={
+        "alpha1": 0.2041,
+        "beta1": 0.05816,
+        "alpha2": 1.415,
+        "beta2": 1.838,
+        "w": 0.0969,
+    },
     prior_param=None,
     expected_method="mantel-haentzel",
     method_alpha=1,
-    minimization_method="CG"
+    minimization_method="CG",
+    minimization_bounds=((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1)),
+    minimization_options=None,
 ):
     """
     A multi-item gamma poisson shrinker algo for disproportionality analysis
@@ -66,15 +87,29 @@ def gps(
         prior_param: Chosen hyper parameters. Default uses maximization
                     of marginal likelihood
 
-        expected_method: The method of calculating the expected counts for
+        expected_method (str): The method of calculating the expected counts for
                         the disproportionality analysis.
 
-        method_alpha: If the expected_method is negative-binomial, this
+        method_alpha (float): If the expected_method is negative-binomial, this
                     parameter is the alpha parameter of the distribution.
 
+        minimization_method (str): The minimization method to use for `scipy.optimize.minimize()`
+
+        minimization_bounds (tuple): An iterable of bounds to constrain the parameter space
+        minimization_options (dict): A dicitonary of kwargs for the scipy.optimize.minimize function specified in `minimization_method`
+
     """
+    input_params = locals()
+    del input_params["container"]
+
     priors = np.asarray(
-        [prior_init["alpha1"], prior_init["beta1"], prior_init["alpha2"], prior_init["beta2"], prior_init["w"]]
+        [
+            prior_init["alpha1"],
+            prior_init["beta1"],
+            prior_init["alpha2"],
+            prior_init["beta2"],
+            prior_init["w"],
+        ]
     )
     DATA = container.data
     N = container.N
@@ -87,6 +122,11 @@ def gps(
 
     if prior_param is None:
         p_out = False
+        if minimization_method not in BOUNDED_METHODS:
+            minimization_bounds = None
+
+        if minimization_options is None:
+            minimization_options = {}
 
         if not truncate:
             data_cont = container.contingency
@@ -102,18 +142,47 @@ def gps(
                 n11_c_temp.extend(list(data_cont[col]))
             n11_c = np.asarray(n11_c_temp)
 
+<<<<<<< HEAD
+            p_out = minimize(
+                non_truncated_likelihood,
+                x0=priors,
+                args=(n11_c, E_c),
+                options={"maxiter": 500},
+                method=minimization_method,
+                bounds=minimization_bounds,
+                **minimization_options,
+            )
+=======
             p_out = minimize(non_truncated_likelihood, x0=priors, args=(n11_c, E_c), options={"maxiter": 500}, method=minimization_method)
+>>>>>>> master
         elif truncate:
             truncate = truncate_thres - 1
             p_out = minimize(
                 truncated_likelihood,
                 x0=priors,
-                args=(n11[n11 >= truncate_thres], expected[n11 >= truncate_thres], truncate),
+                args=(
+                    n11[n11 >= truncate_thres],
+                    expected[n11 >= truncate_thres],
+                    truncate,
+                ),
                 options={"maxiter": 500},
+<<<<<<< HEAD
+                method=minimization_method,
+                bounds=minimization_bounds,
+                **minimization_options,
+            )
+
+        priors = p_out.x
+        if np.any(priors < 0) or priors[4] > 1:
+            warnings.warn(
+                f"Calculated priors violate distribution constraints. Alpha and Beta parameters should be >0 and mixture weight should be >=0 and <=1. Current priors: {priors}. Numerical instability likely during processing. Considering using a minimization method that supports bounds."
+            )
+=======
                 method=minimization_method
             )
 
         priors = p_out.x
+>>>>>>> master
         code_convergence = p_out.message
 
     if min_events > 1:
@@ -142,7 +211,14 @@ def gps(
     EBlog2 = (np.log(2) ** -1) * (Qn * dgterm1 + (1 - Qn) * dgterm2)
 
     # Calculation of the Lower Bound.
-    LB = quantiles(0.05, Qn, priors[0] + n11, priors[1] + expected, priors[2] + n11, priors[3] + expected)
+    LB = quantiles(
+        0.05,
+        Qn,
+        priors[0] + n11,
+        priors[1] + expected,
+        priors[2] + n11,
+        priors[3] + expected,
+    )
 
     # Assignment based on the method
     if ranking_statistic == "p_value":
@@ -156,6 +232,7 @@ def gps(
     post_1_cumsum = np.cumsum(1 - posterior_probability)
     post_1_sum = sum(1 - posterior_probability)
     post_range = np.arange(1, len(posterior_probability) + 1)
+
     if ranking_statistic == "p_value":
         FDR = post_cumsum / np.array(post_range)
         FNR = np.array(post_1_cumsum) / ((num_cell - post_range) + 1e-7)
@@ -168,7 +245,6 @@ def gps(
         Sp = np.array(list(reversed(post_cumsum))) / (num_cell - post_1_sum)
 
     # Number of signals according to the decision rule (pp/FDR/Nb of Signals)
-
     if decision_metric == "fdr":
         num_signals = np.sum(FDR <= decision_thres)
     elif decision_metric == "signals":
@@ -185,8 +261,13 @@ def gps(
     ae = DATA["ae_name"]
     count = n11
     RES = Container(params=True)
-
     # list of the parameters used
+<<<<<<< HEAD
+    RES.param["input_params"] = input_params
+    RES.param["prior_init"] = prior_init
+    RES.param["prior_param"] = priors
+    RES.param["convergence"] = code_convergence
+=======
     RES.input_param = (
         relative_risk,
         min_events,
@@ -205,6 +286,7 @@ def gps(
         RES.param["prior_init"] = prior_init
         RES.param["prior_param"] = priors
         RES.param["convergence"] = code_convergence
+>>>>>>> master
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":
@@ -243,7 +325,9 @@ def gps(
                 "posterior_probability": posterior_probability,
             }
         )
-        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
+        RES.all_signals = RES.all_signals.sort_values(
+            by=[ranking_statistic], ascending=False
+        )
     else:
         RES.all_signals = pd.DataFrame(
             {
@@ -263,7 +347,9 @@ def gps(
                 "p_value": posterior_probability,
             }
         )
-        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
+        RES.all_signals = RES.all_signals.sort_values(
+            by=[ranking_statistic], ascending=False
+        )
 
     # List of Signals generated according to the method
     RES.all_signals.index = np.arange(0, len(RES.all_signals.index))
@@ -271,9 +357,7 @@ def gps(
         num_signals -= 1
     else:
         num_signals = 0
-    RES.signals = RES.all_signals.iloc[
-        0:num_signals,
-    ]
+    RES.signals = RES.all_signals.iloc[0:num_signals,]
 
     # Number of signals
     RES.num_signals = num_signals
@@ -298,22 +382,3 @@ def truncated_likelihood(p, n11, E, truncate):
     term2 = 1 - (p[4] * pnb1 + (1 - p[4]) * pnb2)
 
     return np.sum(-np.log(term1 / term2))
-
-
-class ResultContainer:
-    def __init__(self, empty=False):
-        self.input_param = None
-        self.all_signals = None
-        self.signals = None
-        self.num_signals = None
-        self.param = {}
-        self.empty = empty
-
-    def export(self, name, index=False):
-        writer = pd.ExcelWriter(name)
-        if not self.empty:
-            self.signals.to_excel(writer, "Signals", index=index)
-            self.all_signals.to_excel(writer, "ALL_Signals", index=index)
-            writer.save()
-        else:
-            pd.DataFrame().to_excel(writer, "No Candidates")

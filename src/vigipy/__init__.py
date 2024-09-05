@@ -3,7 +3,19 @@ from .ROR import ror
 from .RFET import rfet
 from .GPS import gps
 from .BCPNN import bcpnn
-from .utils import convert
+from .LASSO import lasso
+from .utils import convert, convert_binary, convert_multi_item
 from .LongitudinalModel.LongitudinalModel import LongitudinalModel
 
-__all__ = ["prr", "ror", "rfet", "gps", "bcpnn", "convert", "LongitudinalModel"]
+__all__ = [
+    "prr",
+    "ror",
+    "rfet",
+    "gps",
+    "bcpnn",
+    "convert",
+    "LongitudinalModel",
+    "convert_binary",
+    "lasso",
+    "convert_multi_item",
+]

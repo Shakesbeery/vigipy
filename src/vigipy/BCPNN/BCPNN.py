@@ -54,15 +54,18 @@ def bcpnn(
                     parameter is the alpha parameter of the distribution.
 
     """
+    input_params = locals()
+    del input_params["container"]
+
     DATA = container.data
     N = container.N
 
     if min_events > 1:
         DATA = DATA.loc[DATA.events >= min_events]
 
-    n11 = np.asarray(DATA["events"], dtype=np.float64)
-    n1j = np.asarray(DATA["product_aes"], dtype=np.float64)
-    ni1 = np.asarray(DATA["count_across_brands"], dtype=np.float64)
+    n11 = DATA["events"].to_numpy(dtype=np.float64)
+    n1j = DATA["product_aes"].to_numpy(dtype=np.float64)
+    ni1 = DATA["count_across_brands"].to_numpy(dtype=np.float64)
     E = calculate_expected(N, n1j, ni1, n11, expected_method, method_alpha)
 
     n10 = n1j - n11
@@ -79,7 +82,9 @@ def bcpnn(
         r2b = N - n11 - 1 + (2 + N) ** 2 / (q1 * p1)
         # Calculate the Information Criterion
         digamma_term = (
-            digamma(r1) - digamma(r1 + r2b) - (digamma(p1) - digamma(p1 + p2) + digamma(q1) - digamma(q1 + q2))
+            digamma(r1)
+            - digamma(r1 + r2b)
+            - (digamma(p1) - digamma(p1 + p2) + digamma(q1) - digamma(q1 + q2))
         )
         IC = np.asarray((np.log(2) ** -1) * digamma_term, dtype=np.float64)
         IC_variance = np.asarray(
@@ -135,12 +140,16 @@ def bcpnn(
 
     if ranking_statistic == "p_value":
         FDR = np.cumsum(posterior_prob) / np.arange(1, len(posterior_prob) + 1)
-        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7)
+        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (
+            num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7
+        )
         Se = np.cumsum(1 - posterior_prob) / (sum(1 - posterior_prob))
         Sp = (np.cumsum(posterior_prob)[::-1]) / (num_cell - sum(1 - posterior_prob))
     else:
         FDR = np.cumsum(posterior_prob) / np.arange(1, len(posterior_prob) + 1)
-        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7)
+        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (
+            num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7
+        )
         Se = np.cumsum((1 - posterior_prob)) / (sum(1 - posterior_prob))
         Sp = (np.cumsum(posterior_prob)[::-1]) / (num_cell - sum(1 - posterior_prob))
 
@@ -157,9 +166,9 @@ def bcpnn(
     name = DATA["product_name"]
     ae = DATA["ae_name"]
     count = n11
-    RC = Container()
+    RC = Container(params=True)
 
-    RC.input_param = (relative_risk, min_events, decision_metric, decision_thres, ranking_statistic)
+    RC.param["input_params"] = input_params
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":
@@ -177,9 +186,11 @@ def bcpnn(
                 "FNR": FNR,
                 "Se": Se,
                 "Sp": Sp,
-            },
-            index=np.arange(len(n11)),
+            }
         ).sort_values(by=[ranking_statistic])
+        RC.signals = RC.all_signals.loc[
+            RC.all_signals[ranking_statistic] <= decision_thres
+        ]
     else:
         RC.all_signals = pd.DataFrame(
             {
@@ -195,19 +206,16 @@ def bcpnn(
                 "FNR": FNR,
                 "Se": Se,
                 "Sp": Sp,
-            },
-            index=np.arange(len(n11)),
+            }
         ).sort_values(by=[ranking_statistic], ascending=False)
+        RC.signals = RC.all_signals.loc[
+            RC.all_signals[ranking_statistic] >= decision_thres
+        ]
 
-    # List of Signals generated according to the decision_thres
-    RC.all_signals.index = np.arange(0, len(RC.all_signals.index))
     if num_signals > 0:
         num_signals -= 1
     else:
         num_signals = 0
-    RC.signals = RC.all_signals.iloc[
-        0:num_signals,
-    ]
 
     # Number of signals
     RC.num_signals = num_signals
