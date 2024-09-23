@@ -72,37 +72,39 @@ def lasso(
             nb = sm.GLM(y, X, family=sm.families.NegativeBinomial(alpha=nb_alpha))
             results = nb.fit_regularized(L1_wt=1)
             all_coefs = results.params.values.copy()
+            ci_lower = np.zeros(len(all_coefs))
+            ci_upper = np.zeros(len(all_coefs))
         else:
             lasso.fit(X, y)
             all_coefs = lasso.coef_.copy()
 
-        # Initialize a list to store bootstrap coefficients
-        bootstrap_coefficients = []
+            # Initialize a list to store bootstrap coefficients
+            bootstrap_coefficients = []
 
-        # Bootstrap resampling
-        for _ in range(num_bootstrap):
-            # Sample with replacement
-            bootstrap_sample_indices = np.random.choice(
-                range(len(ys)), size=len(ys), replace=True
-            )
-            X_bootstrap = X.iloc[bootstrap_sample_indices]
-            y_bootstrap = y[bootstrap_sample_indices]
+            # Bootstrap resampling
+            for _ in range(num_bootstrap):
+                # Sample with replacement
+                bootstrap_sample_indices = np.random.choice(
+                    range(len(ys)), size=len(ys), replace=True
+                )
+                X_bootstrap = X.iloc[bootstrap_sample_indices]
+                y_bootstrap = y[bootstrap_sample_indices]
 
-            # Fit LASSO model to bootstrap sample
-            if use_glm:
-                nb = sm.GLM(y_bootstrap, X_bootstrap, family=sm.families.NegativeBinomial(alpha=nb_alpha))
-                results = nb.fit_regularized(L1_wt=1)
-                boot_coefs = results.params.values.copy()
-            else:
-                lasso.fit(X_bootstrap, y_bootstrap)
-                boot_coefs = lasso.coef_.copy()
-            bootstrap_coefficients.append(boot_coefs)
+                # Fit LASSO model to bootstrap sample
+                if use_glm:
+                    nb = sm.GLM(y_bootstrap, X_bootstrap, family=sm.families.NegativeBinomial(alpha=nb_alpha))
+                    results = nb.fit_regularized(L1_wt=1)
+                    boot_coefs = results.params.values.copy()
+                else:
+                    lasso.fit(X_bootstrap, y_bootstrap)
+                    boot_coefs = lasso.coef_.copy()
+                bootstrap_coefficients.append(boot_coefs)
 
-        bootstrap_coefficients = np.array(bootstrap_coefficients)
+            bootstrap_coefficients = np.array(bootstrap_coefficients)
 
-        # Calculate confidence intervals for each coefficient
-        ci_lower = np.percentile(bootstrap_coefficients, (100 - ci), axis=0)
-        ci_upper = np.percentile(bootstrap_coefficients, ci, axis=0)
+            # Calculate confidence intervals for each coefficient
+            ci_lower = np.percentile(bootstrap_coefficients, (100 - ci), axis=0)
+            ci_upper = np.percentile(bootstrap_coefficients, ci, axis=0)
 
         for product, co, ci_u, ci_l in zip(X.columns, all_coefs, ci_upper, ci_lower):
             res["Product"].append(product)

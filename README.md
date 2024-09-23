@@ -109,6 +109,7 @@ other DA methods. First, because the method measures feature importance, we must
 is the model feature (i.e. column) and the adverse event is the response. A new conversion method `convert_binary` has been
 exposed for this. The only assumption is that the input dataframe's rows each corresponds to a _unique_ drug/device pair. 
 
+#### Pure binary matrix
 ```python
 from vigipy import convert_binary, lasso
 data = pd.read_csv("data.csv")
@@ -116,6 +117,21 @@ data = pd.read_csv("data.csv")
 #provide the column labels for the drug/device name and the column label for the adverse events
 bin_data = convert_binary(data, product_label="name", ae_label="AE")
 results = lasso(bin_data, use_IC=True)
+results.export("lasso_results.xlsx")
+```
+
+#### Binary counts
+In this particular case, we treat our product as a binary participant (feature) in the event - either it was used or not. The event itself
+remains as count data. This introduces a few complications such as removing the ability to bootstrap device-events for confidence interval measurements. It also may artificially inflate reported coefficients in smaller datasets, so use with caution and consider using the `use_glm`
+flag now exposed through the `lasso` function.
+
+```python
+from vigipy import convert_binary, lasso
+data = pd.read_csv("data.csv")
+
+#provide the column labels for the drug/device name and the column label for the adverse events
+bin_data = convert_binary(data, product_label="name", ae_label="AE", use_counts=True)
+results = lasso(bin_data, use_IC=True) # OR res = lasso(bin_data, use_glm=True, lasso_thresh=0.25)
 results.export("lasso_results.xlsx")
 ```
 
