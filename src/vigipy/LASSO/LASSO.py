@@ -1,5 +1,6 @@
 import pandas as pd
 from collections import defaultdict
+import statsmodels.api as sm
 from sklearn.linear_model import Lasso, LassoLars, LassoLarsIC
 import numpy as np
 
@@ -8,6 +9,7 @@ from ..utils import Container
 
 def lasso(
     container,
+    lasso_thresh=0,
     alpha=0.5,
     min_events=3,
     num_bootstrap=10,
@@ -16,6 +18,8 @@ def lasso(
     use_IC=False,
     IC_criterion="bic",
     lasso_kwargs=None,
+    use_glm=False,
+    nb_alpha = 1
 ):
     """The LASSO algorithm for product-event pair signal detection. This function supports vanilla LASSO, LASSO using LARS and
     LASSO using the IC to determine alpha values.
@@ -43,7 +47,9 @@ def lasso(
         lasso_kwargs = dict()
 
     # Set type of LASSO per user inputs
-    if use_IC:
+    if use_glm:
+        pass
+    elif use_IC:
         lasso = LassoLarsIC(criterion=IC_criterion, **lasso_kwargs)
     elif use_lars:
         lasso = LassoLars(alpha=alpha, **lasso_kwargs)
@@ -62,8 +68,13 @@ def lasso(
                 res["CI Upper"].append(0)
             continue
 
-        lasso.fit(X, y)
-        all_coefs = lasso.coef_.copy()
+        if use_glm:
+            nb = sm.GLM(y, X, family=sm.families.NegativeBinomial(alpha=nb_alpha))
+            results = nb.fit_regularized(L1_wt=1)
+            all_coefs = results.params.values.copy()
+        else:
+            lasso.fit(X, y)
+            all_coefs = lasso.coef_.copy()
 
         # Initialize a list to store bootstrap coefficients
         bootstrap_coefficients = []
@@ -78,8 +89,14 @@ def lasso(
             y_bootstrap = y[bootstrap_sample_indices]
 
             # Fit LASSO model to bootstrap sample
-            lasso.fit(X_bootstrap, y_bootstrap)
-            bootstrap_coefficients.append(lasso.coef_.copy())
+            if use_glm:
+                nb = sm.GLM(y_bootstrap, X_bootstrap, family=sm.families.NegativeBinomial(alpha=nb_alpha))
+                results = nb.fit_regularized(L1_wt=1)
+                boot_coefs = results.params.values.copy()
+            else:
+                lasso.fit(X_bootstrap, y_bootstrap)
+                boot_coefs = lasso.coef_.copy()
+            bootstrap_coefficients.append(boot_coefs)
 
         bootstrap_coefficients = np.array(bootstrap_coefficients)
 
@@ -98,8 +115,8 @@ def lasso(
 
     # list of the parameters used
     RES.param = input_params
-    RES.all_signals = pd.DataFrame(res).sort_values(by="CI Lower", ascending=False)
-    RES.signals = RES.all_signals.loc[RES.all_signals["CI Lower"] > 0]
+    RES.all_signals = pd.DataFrame(res).sort_values(by="LASSO Coefficient", ascending=False)
+    RES.signals = RES.all_signals.loc[RES.all_signals["LASSO Coefficient"] > lasso_thresh]
 
     # Number of signals
     RES.num_signals = len(RES.signals)
