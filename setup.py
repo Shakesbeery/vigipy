@@ -44,7 +44,11 @@ setup(
     # For a discussion on single-sourcing the version across setup.py and the
     # project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
+<<<<<<< HEAD
+    version="1.4.1",  # Required
+=======
     version="1.4.0",  # Required
+>>>>>>> master
     # This is a one-line description or tagline of what your project does. This
     # corresponds to the "Summary" metadata field:
     # https://packaging.python.org/specifications/core-metadata/#summary

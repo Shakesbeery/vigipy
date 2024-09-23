@@ -142,7 +142,6 @@ def gps(
                 n11_c_temp.extend(list(data_cont[col]))
             n11_c = np.asarray(n11_c_temp)
 
-<<<<<<< HEAD
             p_out = minimize(
                 non_truncated_likelihood,
                 x0=priors,
@@ -152,9 +151,6 @@ def gps(
                 bounds=minimization_bounds,
                 **minimization_options,
             )
-=======
-            p_out = minimize(non_truncated_likelihood, x0=priors, args=(n11_c, E_c), options={"maxiter": 500}, method=minimization_method)
->>>>>>> master
         elif truncate:
             truncate = truncate_thres - 1
             p_out = minimize(
@@ -166,7 +162,6 @@ def gps(
                     truncate,
                 ),
                 options={"maxiter": 500},
-<<<<<<< HEAD
                 method=minimization_method,
                 bounds=minimization_bounds,
                 **minimization_options,
@@ -177,12 +172,6 @@ def gps(
             warnings.warn(
                 f"Calculated priors violate distribution constraints. Alpha and Beta parameters should be >0 and mixture weight should be >=0 and <=1. Current priors: {priors}. Numerical instability likely during processing. Considering using a minimization method that supports bounds."
             )
-=======
-                method=minimization_method
-            )
-
-        priors = p_out.x
->>>>>>> master
         code_convergence = p_out.message
 
     if min_events > 1:
@@ -262,31 +251,10 @@ def gps(
     count = n11
     RES = Container(params=True)
     # list of the parameters used
-<<<<<<< HEAD
     RES.param["input_params"] = input_params
     RES.param["prior_init"] = prior_init
     RES.param["prior_param"] = priors
     RES.param["convergence"] = code_convergence
-=======
-    RES.input_param = (
-        relative_risk,
-        min_events,
-        decision_metric,
-        decision_thres,
-        ranking_statistic,
-        truncate,
-        truncate_thres,
-    )
-
-    # vector of the final a priori parameters (if p_out=TRUE)
-    if p_out:
-        RES.param["prior_param"] = priors
-    # vector of the initial a priori and final a priori parameters
-    if not p_out:
-        RES.param["prior_init"] = prior_init
-        RES.param["prior_param"] = priors
-        RES.param["convergence"] = code_convergence
->>>>>>> master
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":
