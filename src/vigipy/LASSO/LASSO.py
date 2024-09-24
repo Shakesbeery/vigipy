@@ -71,7 +71,7 @@ def lasso(
         if use_glm:
             nb = sm.GLM(y, X, family=sm.families.NegativeBinomial(alpha=nb_alpha))
             results = nb.fit_regularized(L1_wt=1)
-            all_coefs = results.params.values.copy()
+            all_coefs = np.clip(results.params.values.copy(), 0, None)
             ci_lower = np.zeros(len(all_coefs))
             ci_upper = np.zeros(len(all_coefs))
         else:
