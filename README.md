@@ -10,6 +10,8 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 * rfet() - Reporting fisher's exact test
 * LongitudinalModel() - Apply any model across time to view signal evolution
 * convert() - Convert a table of AEs, product and counts into a format for analysis
+* convert_binary() - Convert product presence to a binary matrix and event counts to either binary or full counts
+* convert_multi_item() - Use co-occuring product columns to generate multi-item rows
 
 ## Getting Started
 
