@@ -92,7 +92,9 @@ def compute_contingency(
     return data_cont
 
 
-def convert_binary(data, product_label="name", ae_label="AE", use_counts=False, count_label="count"):
+def convert_binary(
+    data, product_label="name", ae_label="AE", use_counts=False, count_label="count"
+):
     """Convert input data consisting of unique product-event pairs into a
        binary dataframe indicating which event and which product are
        associated with each other.
@@ -122,7 +124,7 @@ def convert_binary(data, product_label="name", ae_label="AE", use_counts=False, 
         event_df = pd.get_dummies(data[ae_label], prefix="", prefix_sep="")
         event_df = event_df.groupby(by=event_df.columns, axis=1).sum()
         DC.type = "binary"
-        
+
     prod_df = pd.get_dummies(data[product_label], prefix="", prefix_sep="")
     DC.product_features = prod_df.groupby(by=prod_df.columns, axis=1).sum()
 
@@ -131,6 +133,7 @@ def convert_binary(data, product_label="name", ae_label="AE", use_counts=False, 
     DC.data = data
 
     return DC
+
 
 def __expand_dataframe(df, count_label, ae_label, product_label):
     new = defaultdict(list)
@@ -143,15 +146,17 @@ def __expand_dataframe(df, count_label, ae_label, product_label):
     new_data = pd.DataFrame(new)
     return new_data
 
+
 def __transform_dataframe(df, count_label, ae_label):
     # Create a new dataframe with unique values from 'AE' as columns, and initialize all cells with 0
     new_df = pd.DataFrame(0, index=range(len(df)), columns=df[ae_label].unique())
-    
+
     # Iterate through the rows and set the appropriate value from 'count' in the corresponding 'AE' column
     for i, row in df.iterrows():
         new_df.at[i, row[ae_label]] = row[count_label]
-    
+
     return new_df
+
 
 def convert_multi_item(df, product_cols=["name"], ae_col="AE", min_threshold=3):
     """***WARNING*** Currently experimental and not guaranteed to perform as expected.

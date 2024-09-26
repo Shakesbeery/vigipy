@@ -52,13 +52,13 @@ def gps(
     minimization_options=None,
 ):
     """
-    Computes signal detection based on Multi-item enabled Gamma Poisson Shrinkage (GPS) using prior distributions 
+    Computes signal detection based on Multi-item enabled Gamma Poisson Shrinkage (GPS) using prior distributions
     for adverse event and product feature data.
 
     Parameters:
     -----------
     container : object
-        A container object holding the input data, including event counts (`events`), 
+        A container object holding the input data, including event counts (`events`),
         product-event pairs (`product_aes`), and across-brand counts (`count_across_brands`).
     relative_risk : float, optional (default=1)
         The threshold for relative risk used in the posterior probability calculations.
@@ -75,7 +75,7 @@ def gps(
     truncate_thres : float, optional (default=1)
         The truncation threshold for likelihood values if `truncate` is set to True.
     prior_init : dict, optional
-        Initial values for the prior distributions used in Bayesian inference. Contains parameters for two Poisson 
+        Initial values for the prior distributions used in Bayesian inference. Contains parameters for two Poisson
         distributions (alpha1, beta1, alpha2, beta2) and the mixture weight (w).
     prior_param : array, optional (default=None)
         Manually provided prior distribution parameters. If None, the function estimates priors using optimization.
@@ -95,14 +95,14 @@ def gps(
     RES : object
         A container object with the following attributes:
         - `param`: A dictionary of input parameters, including prior initialization and optimization results.
-        - `all_signals`: A DataFrame containing detailed results of signal detection, including posterior probabilities, 
+        - `all_signals`: A DataFrame containing detailed results of signal detection, including posterior probabilities,
           expected counts, and ranking statistics.
         - `signals`: A DataFrame of filtered signals according to the decision metric and threshold.
         - `num_signals`: The number of signals detected based on the decision rule.
 
     Notes:
     ------
-    - This function implements a Bayesian model to calculate posterior probabilities using a mixture of two negative 
+    - This function implements a Bayesian model to calculate posterior probabilities using a mixture of two negative
       binomial distributions.
     - The function can apply different ranking statistics to order results, such as p-value, quantile, or log2.
     - The optimization process is used to estimate the prior parameters unless provided manually.

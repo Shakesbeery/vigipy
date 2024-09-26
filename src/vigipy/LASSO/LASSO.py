@@ -19,11 +19,11 @@ def lasso(
     IC_criterion="bic",
     lasso_kwargs=None,
     use_glm=False,
-    nb_alpha = 1,
-    lasso_alpha=1e-9
+    nb_alpha=1,
+    lasso_alpha=1e-9,
 ):
     """
-    Applies LASSO regression or its variants to detect signals between product features and adverse events, 
+    Applies LASSO regression or its variants to detect signals between product features and adverse events,
     optionally using bootstrap confidence intervals.
 
     Parameters:
@@ -125,7 +125,11 @@ def lasso(
 
                 # Fit LASSO model to bootstrap sample
                 if use_glm:
-                    nb = sm.GLM(y_bootstrap, X_bootstrap, family=sm.families.NegativeBinomial(alpha=nb_alpha))
+                    nb = sm.GLM(
+                        y_bootstrap,
+                        X_bootstrap,
+                        family=sm.families.NegativeBinomial(alpha=nb_alpha),
+                    )
                     results = nb.fit_regularized(L1_wt=1)
                     boot_coefs = results.params.values.copy()
                 else:
@@ -137,7 +141,9 @@ def lasso(
 
             # Calculate confidence intervals for each coefficient
             ci_lower = np.percentile(bootstrap_coefficients, (100 - ci) / 2.0, axis=0)
-            ci_upper = np.percentile(bootstrap_coefficients, 100 - (100 - ci) / 2.0 , axis=0)
+            ci_upper = np.percentile(
+                bootstrap_coefficients, 100 - (100 - ci) / 2.0, axis=0
+            )
 
         for product, co, ci_u, ci_l in zip(X.columns, all_coefs, ci_upper, ci_lower):
             res["Product"].append(product)
@@ -150,8 +156,12 @@ def lasso(
 
     # list of the parameters used
     RES.param = input_params
-    RES.all_signals = pd.DataFrame(res).sort_values(by="LASSO Coefficient", ascending=False)
-    RES.signals = RES.all_signals.loc[RES.all_signals["LASSO Coefficient"] > lasso_thresh]
+    RES.all_signals = pd.DataFrame(res).sort_values(
+        by="LASSO Coefficient", ascending=False
+    )
+    RES.signals = RES.all_signals.loc[
+        RES.all_signals["LASSO Coefficient"] > lasso_thresh
+    ]
 
     # Number of signals
     RES.num_signals = len(RES.signals)
