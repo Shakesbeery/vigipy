@@ -21,21 +21,51 @@ def lasso(
     use_glm=False,
     nb_alpha = 1
 ):
-    """The LASSO algorithm for product-event pair signal detection. This function supports vanilla LASSO, LASSO using LARS and
-    LASSO using the IC to determine alpha values.
+    """
+    Applies LASSO regression or its variants to detect signals between product features and adverse events, 
+    optionally using bootstrap confidence intervals.
 
-    Args:
-        container (Container): A binary container from `convert_binary`
-        alpha (float): The alpha parameter for the LASSO model
-        min_events (int, optional): Minimum number of adverse events of a particular type to attempt a product-ADR analysis. Defaults to 3.
-        num_bootstrap (int, optional): How many iterations of bootstrapping to run for CI calculations. Defaults to 10.
-        ci (int, optional): Upper confidence interval %. The lower bound is considered as 100 - ci. Defaults to 95.
-        use_lars (bool, optional): Use LASSO with least angle regression. Defaults to False.
-        use_IC (bool, optional): Use information criterion to determine alpha. Defaults to False.
-        IC_criterion (str, optional): Either Akaike (AIC) or Bayes (BIC) information criterion. Defaults to "bic".
+    Parameters:
+    -----------
+    container : object
+        A container object holding product features (`product_features`) and event outcomes (`event_outcomes`) in separate attributes.
+    lasso_thresh : float, optional (default=0)
+        The threshold for filtering out LASSO coefficients. Coefficients below this value are ignored in the final results.
+    alpha : float, optional (default=0.5)
+        The regularization strength for LASSO. Higher values lead to stronger regularization.
+    min_events : int, optional (default=3)
+        The minimum number of events required for an adverse event to be considered in the analysis.
+    num_bootstrap : int, optional (default=10)
+        The number of bootstrap resamples to use for computing confidence intervals for LASSO coefficients.
+    ci : int, optional (default=95)
+        The confidence interval percentage for the bootstrapped LASSO coefficients (e.g., 95% CI).
+    use_lars : bool, optional (default=False)
+        Whether to use LASSO-LARS (Least Angle Regression) instead of regular LASSO.
+    use_IC : bool, optional (default=False)
+        Whether to use LASSO with Information Criterion (LassoLarsIC) for model selection.
+    IC_criterion : str, optional (default="bic")
+        The information criterion to be used if `use_IC` is True. Choices are "aic" (Akaike) or "bic" (Bayesian).
+    lasso_kwargs : dict, optional (default=None)
+        Additional keyword arguments to pass to the LASSO model.
+    use_glm : bool, optional (default=False)
+        If True, use Generalized Linear Model (GLM) with L1 regularization instead of LASSO.
+    nb_alpha : float, optional (default=1)
+        Dispersion parameter for Negative Binomial GLM if `use_glm` is True.
 
     Returns:
-        _type_: _description_
+    --------
+    RES : object
+        A container object that holds the following attributes:
+        - `param`: A dictionary of input parameters used for the LASSO.
+        - `all_signals`: A DataFrame containing all computed LASSO coefficients, confidence intervals, and related information.
+        - `signals`: A filtered DataFrame of signals where LASSO coefficients exceed the `lasso_thresh`.
+        - `num_signals`: The number of signals detected.
+
+    Notes:
+    ------
+    - When `use_glm` is True, GLM with Negative Binomial regression is applied instead of LASSO.
+    - Confidence intervals for the LASSO coefficients are generated via bootstrapping iff `use_glm` is False.
+    - The function iterates over adverse events, using product features as predictors, and applies the chosen LASSO model to find associations.
     """
     input_params = locals()
     del input_params["container"]
@@ -103,8 +133,8 @@ def lasso(
             bootstrap_coefficients = np.array(bootstrap_coefficients)
 
             # Calculate confidence intervals for each coefficient
-            ci_lower = np.percentile(bootstrap_coefficients, (100 - ci), axis=0)
-            ci_upper = np.percentile(bootstrap_coefficients, ci, axis=0)
+            ci_lower = np.percentile(bootstrap_coefficients, (100 - ci) / 2.0, axis=0)
+            ci_upper = np.percentile(bootstrap_coefficients, 100 - (100 - ci) / 2.0 , axis=0)
 
         for product, co, ci_u, ci_l in zip(X.columns, all_coefs, ci_upper, ci_lower):
             res["Product"].append(product)

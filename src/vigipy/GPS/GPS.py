@@ -52,52 +52,61 @@ def gps(
     minimization_options=None,
 ):
     """
-    A multi-item gamma poisson shrinker algo for disproportionality analysis
+    Computes signal detection based on Multi-item enabled Gamma Poisson Shrinkage (GPS) using prior distributions 
+    for adverse event and product feature data.
 
-    Arguments:
+    Parameters:
+    -----------
+    container : object
+        A container object holding the input data, including event counts (`events`), 
+        product-event pairs (`product_aes`), and across-brand counts (`count_across_brands`).
+    relative_risk : float, optional (default=1)
+        The threshold for relative risk used in the posterior probability calculations.
+    min_events : int, optional (default=1)
+        The minimum number of events required for an adverse event to be considered in the analysis.
+    decision_metric : str, optional (default="rank")
+        The decision rule for signal detection. Options are 'rank', 'fdr', or 'signals'.
+    decision_thres : float, optional (default=0.05)
+        The threshold used in the decision rule to filter significant signals.
+    ranking_statistic : str, optional (default="log2")
+        The ranking statistic used to order the results. Options include 'log2', 'p_value', or 'quantile'.
+    truncate : bool, optional (default=False)
+        Whether to truncate likelihoods below a certain threshold for stability in signal detection.
+    truncate_thres : float, optional (default=1)
+        The truncation threshold for likelihood values if `truncate` is set to True.
+    prior_init : dict, optional
+        Initial values for the prior distributions used in Bayesian inference. Contains parameters for two Poisson 
+        distributions (alpha1, beta1, alpha2, beta2) and the mixture weight (w).
+    prior_param : array, optional (default=None)
+        Manually provided prior distribution parameters. If None, the function estimates priors using optimization.
+    expected_method : str, optional (default="mantel-haentzel")
+        The method used to calculate the expected event counts. Options include "mantel-haentzel", "negative-binomial" and "poisson".
+    method_alpha : float, optional (default=1)
+        Dispersion parameter used in the expected value calculation method.
+    minimization_method : str, optional (default="CG")
+        The optimization method used for estimating prior parameters if `prior_param` is None.
+    minimization_bounds : tuple, optional
+        Bounds on the prior parameter values for the optimization process.
+    minimization_options : dict, optional
+        Options for the minimization routine.
 
-        container: A DataContainer object produced by the convert()
-                    function from data_prep.py
+    Returns:
+    --------
+    RES : object
+        A container object with the following attributes:
+        - `param`: A dictionary of input parameters, including prior initialization and optimization results.
+        - `all_signals`: A DataFrame containing detailed results of signal detection, including posterior probabilities, 
+          expected counts, and ranking statistics.
+        - `signals`: A DataFrame of filtered signals according to the decision metric and threshold.
+        - `num_signals`: The number of signals detected based on the decision rule.
 
-        relative_risk (float): The relative risk value
-
-        min_events: The min number of AE reports to be considered a signal
-
-        decision_metric (str): The metric used for detecting signals:
-                            {fdr = false detection rate,
-                            signals = number of signals,
-                            rank = ranking statistic}
-
-        decision_thres (float): The min thres value for the decision_metric
-
-        ranking_statistic (str): How to rank signals:
-                                {p-value-posterior probability,
-                                quantile-5% quantile of the lambda dist,
-                                log2-Posterior expectation of log2(lambda)}
-
-        truncate: Calculate data hyperparameters with at least
-                    truncate_thres notifications
-
-        truncate_thres: Threshold for hyper parameter calculations
-
-        prior_init (dict): The priors for multi-item gamma poisson shrinkage.
-                        By default they are the priors from DuMouchel's
-                        1999 paper.
-
-        prior_param: Chosen hyper parameters. Default uses maximization
-                    of marginal likelihood
-
-        expected_method (str): The method of calculating the expected counts for
-                        the disproportionality analysis.
-
-        method_alpha (float): If the expected_method is negative-binomial, this
-                    parameter is the alpha parameter of the distribution.
-
-        minimization_method (str): The minimization method to use for `scipy.optimize.minimize()`
-
-        minimization_bounds (tuple): An iterable of bounds to constrain the parameter space
-        minimization_options (dict): A dicitonary of kwargs for the scipy.optimize.minimize function specified in `minimization_method`
-
+    Notes:
+    ------
+    - This function implements a Bayesian model to calculate posterior probabilities using a mixture of two negative 
+      binomial distributions.
+    - The function can apply different ranking statistics to order results, such as p-value, quantile, or log2.
+    - The optimization process is used to estimate the prior parameters unless provided manually.
+    - The function can handle truncation for numerical stability when dealing with sparse data.
     """
     input_params = locals()
     del input_params["container"]
