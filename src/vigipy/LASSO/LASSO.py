@@ -19,7 +19,8 @@ def lasso(
     IC_criterion="bic",
     lasso_kwargs=None,
     use_glm=False,
-    nb_alpha = 1
+    nb_alpha = 1,
+    lasso_alpha=1e-9
 ):
     """
     Applies LASSO regression or its variants to detect signals between product features and adverse events, 
@@ -51,6 +52,8 @@ def lasso(
         If True, use Generalized Linear Model (GLM) with L1 regularization instead of LASSO.
     nb_alpha : float, optional (default=1)
         Dispersion parameter for Negative Binomial GLM if `use_glm` is True.
+    lasso_alpha : float, optional (default=1e-9)
+        ElasticNet alpha parameter for GLM if `use_glm` is True.
 
     Returns:
     --------
@@ -100,7 +103,7 @@ def lasso(
 
         if use_glm:
             nb = sm.GLM(y, X, family=sm.families.NegativeBinomial(alpha=nb_alpha))
-            results = nb.fit_regularized(L1_wt=1)
+            results = nb.fit_regularized(L1_wt=1, alpha=lasso_alpha)
             all_coefs = np.clip(results.params.values.copy(), 0, None)
             ci_lower = np.zeros(len(all_coefs))
             ci_upper = np.zeros(len(all_coefs))
