@@ -29,6 +29,13 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 ### Installation
 
 To install, navigate to the root directory of the repository and from the command line/terminal run:
+
+```bash
+python setup.py install
+```
+
+OR
+
 ```bash
 python setup.py bdist_wheel
 pip install dist\<WheelName>
