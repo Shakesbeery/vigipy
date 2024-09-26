@@ -4,6 +4,7 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 
 * bcpnn() - Bayesian confidence propogation neural network
 * gps() - Multi-item gamma poisson shrinker
+* lasso() - LASSO
 * prr() - Proportional reporting ratio
 * ror() - Reporting odds ratio
 * rfet() - Reporting fisher's exact test
@@ -28,7 +29,7 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 To install, navigate to the root directory of the repository and from the command line/terminal run:
 ```bash
 python setup.py bdist_wheel
-pip install dist\vigipy-1.0.0-py3-none-any.whl
+pip install dist\<WheelName>
 ```
 
 You should now be able to import the vigipy library in your code.
@@ -52,7 +53,6 @@ import pandas as pd
 df = pd.read_csv('AE_count_data.csv')
 vivipy_data = convert(df)
 
-#My personal favorite model to run. With 'log2' or 'quantile' as the statistic.
 results = gps(vigipy_data, min_events=5, decision_metric='rank',
               decision_thres=1, ranking_statistic='log2', minimization_method="Nelder-Mead")
 results.signals.to_excel('possible_signals.xlsx', index=False)
