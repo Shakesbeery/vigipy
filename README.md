@@ -4,11 +4,14 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 
 * bcpnn() - Bayesian confidence propogation neural network
 * gps() - Multi-item gamma poisson shrinker
+* lasso() - LASSO
 * prr() - Proportional reporting ratio
 * ror() - Reporting odds ratio
 * rfet() - Reporting fisher's exact test
 * LongitudinalModel() - Apply any model across time to view signal evolution
 * convert() - Convert a table of AEs, product and counts into a format for analysis
+* convert_binary() - Convert product presence to a binary matrix and event counts to either binary or full counts
+* convert_multi_item() - Use co-occuring product columns to generate multi-item rows
 
 ## Getting Started
 
@@ -26,9 +29,16 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 ### Installation
 
 To install, navigate to the root directory of the repository and from the command line/terminal run:
+
+```bash
+python setup.py install
+```
+
+OR
+
 ```bash
 python setup.py bdist_wheel
-pip install dist\vigipy-1.0.0-py3-none-any.whl
+pip install dist\<WheelName>
 ```
 
 You should now be able to import the vigipy library in your code.
@@ -52,7 +62,6 @@ import pandas as pd
 df = pd.read_csv('AE_count_data.csv')
 vivipy_data = convert(df)
 
-#My personal favorite model to run. With 'log2' or 'quantile' as the statistic.
 results = gps(vigipy_data, min_events=5, decision_metric='rank',
               decision_thres=1, ranking_statistic='log2', minimization_method="Nelder-Mead")
 results.signals.to_excel('possible_signals.xlsx', index=False)
@@ -109,6 +118,7 @@ other DA methods. First, because the method measures feature importance, we must
 is the model feature (i.e. column) and the adverse event is the response. A new conversion method `convert_binary` has been
 exposed for this. The only assumption is that the input dataframe's rows each corresponds to a _unique_ drug/device pair. 
 
+#### Pure binary matrix
 ```python
 from vigipy import convert_binary, lasso
 data = pd.read_csv("data.csv")
@@ -116,6 +126,21 @@ data = pd.read_csv("data.csv")
 #provide the column labels for the drug/device name and the column label for the adverse events
 bin_data = convert_binary(data, product_label="name", ae_label="AE")
 results = lasso(bin_data, use_IC=True)
+results.export("lasso_results.xlsx")
+```
+
+#### Binary counts
+In this particular case, we treat our product as a binary participant (feature) in the event - either it was used or not. The event itself
+remains as count data. This introduces a few complications such as removing the ability to bootstrap device-events for confidence interval measurements. It also may artificially inflate reported coefficients in smaller datasets, so use with caution and consider using the `use_glm`
+flag now exposed through the `lasso` function.
+
+```python
+from vigipy import convert_binary, lasso
+data = pd.read_csv("data.csv")
+
+#provide the column labels for the drug/device name and the column label for the adverse events
+bin_data = convert_binary(data, product_label="name", ae_label="AE", use_counts=True)
+results = lasso(bin_data, use_IC=True) # OR res = lasso(bin_data, use_glm=True, lasso_thresh=0.25)
 results.export("lasso_results.xlsx")
 ```
 
