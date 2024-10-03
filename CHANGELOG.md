@@ -1,5 +1,30 @@
 #Changelog
 
+## 2.0.0
+
+### Added
+- New LASSO option to use an NB-GLM backend with L1 regularization
+- Binary conversion forces expansion of summed counts to be compatible with LASSO
+- Binary conversion requires `use_counts` flag to skip expansion
+
+### Changed
+- Added new sections to the readme for all new features
+- setup.py file much cleaner and easy to read/use
+- Improved documentation for GPS and LASSO
+- Final signal detection for LASSO now based on LASSO threshold parameter
+
+## 1.4.0
+
+### Added
+- New LASSO implementation for more DA options
+- Exposed the scipy minimization function to user arguments
+- Default boundaries for the GPS algorithm
+- Data conversion tools for binary matrices and multi-item matrices
+
+### Fixed
+- Wrong GPS hyperparameters were being used
+- Errors with BCPNN indexing during signal output
+
 ## 1.3.0
 - Added better error handling in the LBE function to avoid crashing when no objects meet threshold criteria
 - Changed PRR argument to accept `fdr_threshold` argument which is now passed to `lbe()`
