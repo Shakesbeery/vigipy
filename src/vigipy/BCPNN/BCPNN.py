@@ -210,7 +210,7 @@ def bcpnn(
         ).sort_values(by=[ranking_statistic], ascending=False)
         RC.signals = RC.all_signals.loc[
             RC.all_signals[ranking_statistic] >= decision_thres
-        ]
+        ].reset_index()
 
     if num_signals > 0:
         num_signals -= 1

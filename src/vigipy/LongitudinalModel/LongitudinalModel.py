@@ -1,9 +1,12 @@
 import pandas as pd
 import traceback
-from ..utils import convert, convert_binary
+from ..utils import convert, convert_binary, convert_multi_item
 
 
 class LongitudinalModel:
+
+    CONVERSION_TYPES = {"base", "binary", "multi-item"}
+
     def __init__(self, dataframe, time_unit):
         """
         Initialize the longitudinal model with raw data and a time unit.
@@ -20,13 +23,22 @@ class LongitudinalModel:
         self.date_groups = dataframe.resample(time_unit, on="date")
         self.data = dataframe
 
-    def _convert(self, data, use_binary):
-        if use_binary:
-            return convert_binary(data)
+    def _convert(self, data, conversion_type, conversion_kwargs):
+        if conversion_type not in self.CONVERSION_TYPES:
+            raise ValueError(f"Provided `conversion_type` not in {self.CONVERSION_TYPES}")
 
-        return convert(data)
+        if conversion_kwargs is None:
+            conversion_kwargs = {}
 
-    def run(self, model, include_gaps=True, use_binary=False, **kwargs):
+        if conversion_type == "base":
+            return convert(data, **conversion_kwargs)
+        elif conversion_type == "binary":
+            return convert_binary(data, **conversion_kwargs)
+        elif conversion_type == "multi-item":
+            return convert_multi_item(data, **conversion_kwargs)
+
+
+    def run(self, model, include_gaps=True, conversion_type="base", conversion_kwargs=None, **kwargs):
         """
         Run the longitudinal model as initialized.
 
@@ -49,10 +61,10 @@ class LongitudinalModel:
                 continue
 
             subset = self.data.loc[self.data["date"] <= timestamp]
-            sub_container = self._convert(subset, use_binary)
+            sub_container = self._convert(subset, conversion_type, conversion_kwargs)
             self._run_model(model, sub_container, timestamp, include_gaps, kwargs)
 
-    def run_disjoint(self, model, include_gaps=True, use_binary=False, **kwargs):
+    def run_disjoint(self, model, include_gaps=True, conversion_type="base", conversion_kwargs=None, **kwargs):
         """
         Run the longitudinal model as initialized.
 
@@ -76,7 +88,7 @@ class LongitudinalModel:
                     self.results.append((timestamp, None))
                 continue
 
-            sub_container = self._convert(subset, use_binary)
+            sub_container = self._convert(subset, conversion_type, conversion_kwargs)
             self._run_model(model, sub_container, timestamp, include_gaps, kwargs)
 
     def _run_model(self, model, sub_container, timestamp, include_gaps, kwargs):
@@ -87,7 +99,7 @@ class LongitudinalModel:
             print(traceback.format_exc())
             if include_gaps:
                 self.results.append((timestamp, None))
-            print("Insufficient data for this model. Skipping this slice.")
+            print(f"Insufficient data for this model. Skipping this slice: {timestamp}")
 
     def regroup_dates(self, time_unit):
         """

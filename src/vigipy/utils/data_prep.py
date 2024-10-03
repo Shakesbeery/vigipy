@@ -93,7 +93,7 @@ def compute_contingency(
 
 
 def convert_binary(
-    data, product_label="name", ae_label="AE", use_counts=False, count_label="count"
+    data, product_label="name", ae_label="AE", use_counts=False, count_label="count", expand_counts=True
 ):
     """Convert input data consisting of unique product-event pairs into a
        binary dataframe indicating which event and which product are
@@ -110,6 +110,10 @@ def convert_binary(
 
     """
     DC = Container()
+
+    # Sanitize df to remove unnecessary information during transforms
+    data = _sanitize_data(data, [product_label, ae_label, count_label])
+
     if use_counts:
         if not isinstance(product_label, str):
             group_list = [*product_label, ae_label]
@@ -119,7 +123,7 @@ def convert_binary(
         event_df = __transform_dataframe(data, count_label, ae_label)
         DC.type = "binary_count"
     else:
-        if data[count_label].max() > 1:
+        if data[count_label].max() > 1 and expand_counts:
             data = __expand_dataframe(data, count_label, ae_label, product_label)
         event_df = pd.get_dummies(data[ae_label], prefix="", prefix_sep="")
         event_df = event_df.groupby(by=event_df.columns, axis=1).sum()
@@ -135,30 +139,7 @@ def convert_binary(
     return DC
 
 
-def __expand_dataframe(df, count_label, ae_label, product_label):
-    new = defaultdict(list)
-    for row in df.itertuples(index=False):
-        for _ in range(int(getattr(row, count_label))):
-            new[product_label].append(getattr(row, product_label))
-            new[ae_label].append(getattr(row, ae_label))
-            new[count_label].append(1)
-
-    new_data = pd.DataFrame(new)
-    return new_data
-
-
-def __transform_dataframe(df, count_label, ae_label):
-    # Create a new dataframe with unique values from 'AE' as columns, and initialize all cells with 0
-    new_df = pd.DataFrame(0, index=range(len(df)), columns=df[ae_label].unique())
-
-    # Iterate through the rows and set the appropriate value from 'count' in the corresponding 'AE' column
-    for i, row in df.iterrows():
-        new_df.at[i, row[ae_label]] = row[count_label]
-
-    return new_df
-
-
-def convert_multi_item(df, product_cols=["name"], ae_col="AE", min_threshold=3):
+def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="count", min_threshold=3):
     """***WARNING*** Currently experimental and not guaranteed to perform as expected.
     Convert data with multiple product columns into a multi-item flattened dataframe for the DA methods.
 
@@ -172,19 +153,23 @@ def convert_multi_item(df, product_cols=["name"], ae_col="AE", min_threshold=3):
     Returns:
         Container: A container object that holds the necessary components for DA.
     """
-    ae_counts = Counter()
-    product_counts = Counter()
-    for col in product_cols:
-        product_counts.update(Counter(df[col]))
-        ae_counts.update(Counter(df.loc[df[col] != ""][ae_col]))
+    ae_counts = defaultdict(int)
+    product_counts = defaultdict(int)
+    for col in product_label:
+        for ae, product, count in df.loc[df[col] != ""][[ae_label, col, count_label]].itertuples(index=False):
+            ae_counts[ae] += count
+            product_counts[product] += count
 
     # Initialize an empty list to store the result
     result = []
 
+    # Sanitize df to remove unnecessary information during transforms
+    df = _sanitize_data(df, [product_label, ae_label, count_label])
+
     # Iterate over each row in the dataframe
     for _, row in df.iterrows():
         # Extract product names from the current row
-        names = {row[x] for x in product_cols if row[x]}
+        names = {row[x] for x in product_label if row[x]}
         # Get all unique combinations of names (without repetition)
         combos = list(
             chain.from_iterable(
@@ -193,10 +178,10 @@ def convert_multi_item(df, product_cols=["name"], ae_col="AE", min_threshold=3):
         )
         # Append combinations to the result list with the other column info
         for combo in combos:
-            new_data = {idx: row[idx] for idx in row.index if idx not in product_cols}
+            new_data = {idx: row[idx] for idx in row.index if idx not in product_label}
             new_data["product_name"] = f"{'|'.join([c for c in combo if c])}"
             new_data["product_aes"] = sum([product_counts[p] for p in combo])
-            new_data["count_across_brands"] = ae_counts[row[ae_col]]
+            new_data["count_across_brands"] = ae_counts[row[ae_label]]
             result.append(new_data)
 
     # Convert the result list to a new dataframe
@@ -205,7 +190,7 @@ def convert_multi_item(df, product_cols=["name"], ae_col="AE", min_threshold=3):
     new_df["events"] = new_df.apply(
         lambda x: event_series[x["AE"]][x["product_name"]], axis=1
     )
-    new_df.rename(columns={ae_col: "ae_name"}, inplace=True)
+    new_df.rename(columns={ae_label: "ae_name"}, inplace=True)
 
     DC = Container()
     DC.contingency = compute_contingency(
@@ -248,3 +233,36 @@ def count(data, rows, cols):
 
     df = pd.DataFrame(d)
     return df
+
+def _sanitize_data(df, keep_labels):
+    keep = []
+    for label in keep_labels:
+        if not isinstance(label, str):
+            keep.extend(label)
+        else:
+            keep.append(label)
+
+    return df[keep].copy()
+
+
+def __expand_dataframe(df, count_label, ae_label, product_label):
+    new = defaultdict(list)
+    for row in df.itertuples(index=False):
+        for _ in range(int(getattr(row, count_label))):
+            new[product_label].append(getattr(row, product_label))
+            new[ae_label].append(getattr(row, ae_label))
+            new[count_label].append(1)
+
+    new_data = pd.DataFrame(new)
+    return new_data
+
+
+def __transform_dataframe(df, count_label, ae_label):
+    # Create a new dataframe with unique values from 'AE' as columns, and initialize all cells with 0
+    new_df = pd.DataFrame(0, index=range(len(df)), columns=df[ae_label].unique())
+
+    # Iterate through the rows and set the appropriate value from 'count' in the corresponding 'AE' column
+    for i, row in df.iterrows():
+        new_df.at[i, row[ae_label]] = row[count_label]
+
+    return new_df
