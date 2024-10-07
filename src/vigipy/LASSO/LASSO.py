@@ -117,9 +117,7 @@ def lasso(
             # Bootstrap resampling
             for _ in range(num_bootstrap):
                 # Sample with replacement
-                bootstrap_sample_indices = np.random.choice(
-                    range(len(ys)), size=len(ys), replace=True
-                )
+                bootstrap_sample_indices = np.random.choice(range(len(ys)), size=len(ys), replace=True)
                 X_bootstrap = X.iloc[bootstrap_sample_indices]
                 y_bootstrap = y[bootstrap_sample_indices]
 
@@ -141,9 +139,7 @@ def lasso(
 
             # Calculate confidence intervals for each coefficient
             ci_lower = np.percentile(bootstrap_coefficients, (100 - ci) / 2.0, axis=0)
-            ci_upper = np.percentile(
-                bootstrap_coefficients, 100 - (100 - ci) / 2.0, axis=0
-            )
+            ci_upper = np.percentile(bootstrap_coefficients, 100 - (100 - ci) / 2.0, axis=0)
 
         for product, co, ci_u, ci_l in zip(X.columns, all_coefs, ci_upper, ci_lower):
             res["Product"].append(product)
@@ -156,12 +152,8 @@ def lasso(
 
     # list of the parameters used
     RES.param = input_params
-    RES.all_signals = pd.DataFrame(res).sort_values(
-        by="LASSO Coefficient", ascending=False
-    )
-    RES.signals = RES.all_signals.loc[
-        RES.all_signals["LASSO Coefficient"] > lasso_thresh
-    ]
+    RES.all_signals = pd.DataFrame(res).sort_values(by="LASSO Coefficient", ascending=False)
+    RES.signals = RES.all_signals.loc[RES.all_signals["LASSO Coefficient"] > lasso_thresh]
 
     # Number of signals
     RES.num_signals = len(RES.signals)

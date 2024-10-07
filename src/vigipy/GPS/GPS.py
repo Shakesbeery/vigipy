@@ -2,6 +2,7 @@
 import numpy as np
 import warnings
 from scipy.special import gdtr
+from scipy.stats import nbinom
 from scipy.optimize import minimize
 from sympy.functions.special import gamma_functions
 
@@ -161,14 +162,14 @@ def gps(
                 **minimization_options,
             )
         elif truncate:
-            truncate = truncate_thres - 1
+            trunc = truncate_thres - 1
             p_out = minimize(
                 truncated_likelihood,
                 x0=priors,
                 args=(
                     n11[n11 >= truncate_thres],
                     expected[n11 >= truncate_thres],
-                    truncate,
+                    trunc,
                 ),
                 options={"maxiter": 500},
                 method=minimization_method,
@@ -194,8 +195,9 @@ def gps(
     posterior_probability = []
 
     # Posterior probability of the null hypothesis
-    qdb1 = dnbinom(n11, size=priors[0], prob=priors[1] / (priors[1] + expected))
-    qdb2 = dnbinom(n11, size=priors[2], prob=priors[3] / (priors[3] + expected))
+    qdb1 = nbinom(n=priors[0], p=priors[1] / (priors[1] + expected)).pmf(n11)
+    qdb2 = nbinom(n=priors[2], p=priors[3] / (priors[3] + expected)).pmf(n11)
+
     Qn = priors[4] * qdb1 / (priors[4] * qdb1 + (1 - priors[4]) * qdb2)
 
     gd1 = gdtr(relative_risk, priors[0] + n11, priors[1] + expected)
@@ -302,9 +304,7 @@ def gps(
                 "posterior_probability": posterior_probability,
             }
         )
-        RES.all_signals = RES.all_signals.sort_values(
-            by=[ranking_statistic], ascending=False
-        )
+        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
     else:
         RES.all_signals = pd.DataFrame(
             {
@@ -324,9 +324,7 @@ def gps(
                 "p_value": posterior_probability,
             }
         )
-        RES.all_signals = RES.all_signals.sort_values(
-            by=[ranking_statistic], ascending=False
-        )
+        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
 
     # List of Signals generated according to the method
     RES.all_signals.index = np.arange(0, len(RES.all_signals.index))
@@ -334,7 +332,9 @@ def gps(
         num_signals -= 1
     else:
         num_signals = 0
-    RES.signals = RES.all_signals.iloc[0:num_signals,]
+    RES.signals = RES.all_signals.iloc[
+        0:num_signals,
+    ]
 
     # Number of signals
     RES.num_signals = num_signals
@@ -343,19 +343,19 @@ def gps(
 
 
 def non_truncated_likelihood(p, n11, E):
-    dnb1 = np.nan_to_num(dnbinom(n11, prob=p[1] / (p[1] + E), size=p[0]))
-    dnb2 = np.nan_to_num(dnbinom(n11, prob=p[3] / (p[3] + E), size=p[2]))
+    dnb1 = nbinom(n=p[0], p=p[1] / (p[1] + E)).pmf(n11)
+    dnb2 = nbinom(n=p[2], p=p[3] / (p[3] + E)).pmf(n11)
     term = (p[4] * dnb1 + (1 - p[4]) * dnb2) + 1e-7
     return np.sum(-np.log(term))
 
 
 def truncated_likelihood(p, n11, E, truncate):
-    dnb1 = dnbinom(n11, size=p[0], prob=p[1] / (p[1] + E))
-    dnb2 = dnbinom(n11, size=p[2], prob=p[3] / (p[3] + E))
+    dnb1 = nbinom(n=p[0], p=p[1] / (p[1] + E)).pmf(n11)
+    dnb2 = nbinom(n=p[2], p=p[3] / (p[3] + E)).pmf(n11)
     term1 = p[4] * dnb1 + (1 - p[4]) * dnb2
 
-    pnb1 = pnbinom(truncate, size=p[0], prob=p[1] / (p[1] + E))
-    pnb2 = pnbinom(truncate, size=p[2], prob=p[3] / (p[3] + E))
+    pnb1 = nbinom(n=p[0], p=p[1] / (p[1] + E)).cdf(truncate)
+    pnb2 = nbinom(n=p[2], p=p[3] / (p[3] + E)).cdf(truncate)
     term2 = 1 - (p[4] * pnb1 + (1 - p[4]) * pnb2)
 
     return np.sum(-np.log(term1 / term2))
