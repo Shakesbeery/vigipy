@@ -6,7 +6,7 @@
 - All nbinom functions are now scipy native, resulting in massive speed improvements for `gps()`
 
 ### Fixed
-- pnbinom provided unstable estimates as previously implemented. New implementation resolves this.
+- `pnbinom()` provided unstable distribution estimates as previously implemented. New implementation resolves this.
 
 ## 0.2.0
 

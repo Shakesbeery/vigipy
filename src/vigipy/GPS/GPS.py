@@ -304,9 +304,7 @@ def gps(
                 "posterior_probability": posterior_probability,
             }
         )
-        RES.all_signals = RES.all_signals.sort_values(
-            by=[ranking_statistic], ascending=False
-        )
+        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
     else:
         RES.all_signals = pd.DataFrame(
             {
@@ -326,9 +324,7 @@ def gps(
                 "p_value": posterior_probability,
             }
         )
-        RES.all_signals = RES.all_signals.sort_values(
-            by=[ranking_statistic], ascending=False
-        )
+        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
 
     # List of Signals generated according to the method
     RES.all_signals.index = np.arange(0, len(RES.all_signals.index))
@@ -336,7 +332,9 @@ def gps(
         num_signals -= 1
     else:
         num_signals = 0
-    RES.signals = RES.all_signals.iloc[0:num_signals,]
+    RES.signals = RES.all_signals.iloc[
+        0:num_signals,
+    ]
 
     # Number of signals
     RES.num_signals = num_signals

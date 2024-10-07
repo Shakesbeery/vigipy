@@ -90,11 +90,41 @@ class StateOneTest(unittest.TestCase):
 
     def test_lasso(self):
         global bin_data
-        lasso(bin_data, 0.1, min_events=3, num_bootstrap=10, ci=95, use_lars=True, use_IC=False, IC_criterion="bic", **kwargs)
+        lasso(
+            bin_data,
+            0.1,
+            min_events=3,
+            num_bootstrap=10,
+            ci=95,
+            use_lars=True,
+            use_IC=False,
+            IC_criterion="bic",
+            **kwargs
+        )
         for crit in ("aic", "bic"):
-            lasso(bin_data, 0.1, min_events=3, num_bootstrap=10, ci=95, use_lars=False, use_IC=True, IC_criterion=crit, **kwargs)
+            lasso(
+                bin_data,
+                0.1,
+                min_events=3,
+                num_bootstrap=10,
+                ci=95,
+                use_lars=False,
+                use_IC=True,
+                IC_criterion=crit,
+                **kwargs
+            )
 
-        lasso(bin_data, 0.1, min_events=3, num_bootstrap=50, ci=95, use_lars=False, use_IC=False, IC_criterion="bic", **kwargs)
+        lasso(
+            bin_data,
+            0.1,
+            min_events=3,
+            num_bootstrap=50,
+            ci=95,
+            use_lars=False,
+            use_IC=False,
+            IC_criterion="bic",
+            **kwargs
+        )
 
     def test6_LongModel(self):
         global df
@@ -102,7 +132,7 @@ class StateOneTest(unittest.TestCase):
         LM = LongitudinalModel(df, "A")
 
         print("Starting longitudinal model testing...")
-        #LM.run(gps, False, decision_metric="rank", ranking_statistic="quantile")
+        # LM.run(gps, False, decision_metric="rank", ranking_statistic="quantile")
         LM.run(bcpnn, False, decision_metric="signals", ranking_statistic="quantile")
         LM.run(prr, False, min_events=1, decision_metric="signals", ranking_statistic="p_value")
         print("Finished with longitudinal model testing...")
