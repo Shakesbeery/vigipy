@@ -82,9 +82,7 @@ def bcpnn(
         r2b = N - n11 - 1 + (2 + N) ** 2 / (q1 * p1)
         # Calculate the Information Criterion
         digamma_term = (
-            digamma(r1)
-            - digamma(r1 + r2b)
-            - (digamma(p1) - digamma(p1 + p2) + digamma(q1) - digamma(q1 + q2))
+            digamma(r1) - digamma(r1 + r2b) - (digamma(p1) - digamma(p1 + p2) + digamma(q1) - digamma(q1 + q2))
         )
         IC = np.asarray((np.log(2) ** -1) * digamma_term, dtype=np.float64)
         IC_variance = np.asarray(
@@ -140,16 +138,12 @@ def bcpnn(
 
     if ranking_statistic == "p_value":
         FDR = np.cumsum(posterior_prob) / np.arange(1, len(posterior_prob) + 1)
-        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (
-            num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7
-        )
+        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7)
         Se = np.cumsum(1 - posterior_prob) / (sum(1 - posterior_prob))
         Sp = (np.cumsum(posterior_prob)[::-1]) / (num_cell - sum(1 - posterior_prob))
     else:
         FDR = np.cumsum(posterior_prob) / np.arange(1, len(posterior_prob) + 1)
-        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (
-            num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7
-        )
+        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7)
         Se = np.cumsum((1 - posterior_prob)) / (sum(1 - posterior_prob))
         Sp = (np.cumsum(posterior_prob)[::-1]) / (num_cell - sum(1 - posterior_prob))
 
@@ -188,9 +182,7 @@ def bcpnn(
                 "Sp": Sp,
             }
         ).sort_values(by=[ranking_statistic])
-        RC.signals = RC.all_signals.loc[
-            RC.all_signals[ranking_statistic] <= decision_thres
-        ]
+        RC.signals = RC.all_signals.loc[RC.all_signals[ranking_statistic] <= decision_thres]
     else:
         RC.all_signals = pd.DataFrame(
             {
@@ -208,9 +200,7 @@ def bcpnn(
                 "Sp": Sp,
             }
         ).sort_values(by=[ranking_statistic], ascending=False)
-        RC.signals = RC.all_signals.loc[
-            RC.all_signals[ranking_statistic] >= decision_thres
-        ].reset_index()
+        RC.signals = RC.all_signals.loc[RC.all_signals[ranking_statistic] >= decision_thres]
 
     if num_signals > 0:
         num_signals -= 1

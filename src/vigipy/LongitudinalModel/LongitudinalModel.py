@@ -80,9 +80,7 @@ class LongitudinalModel:
 
         """
         self.results = []
-        for count, (timestamp, subset) in zip(
-            self.date_groups.sum()["count"], self.date_groups
-        ):
+        for count, (timestamp, subset) in zip(self.date_groups.sum()["count"], self.date_groups):
             if count == 0:
                 if include_gaps:
                     self.results.append((timestamp, None))

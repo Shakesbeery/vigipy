@@ -37,9 +37,7 @@ def convert(
                                     components for DA.
 
     """
-    data_cont = compute_contingency(
-        data_frame, product_label, count_label, ae_label, margin_threshold
-    )
+    data_cont = compute_contingency(data_frame, product_label, count_label, ae_label, margin_threshold)
     col_sums = np.sum(data_cont, axis=0)
     row_sums = np.sum(data_cont, axis=1)
 
@@ -55,9 +53,7 @@ def convert(
     return DC
 
 
-def compute_contingency(
-    data_frame, product_label, count_label, ae_label, margin_threshold
-):
+def compute_contingency(data_frame, product_label, count_label, ae_label, margin_threshold):
     """Compute the contingency table for DA
 
     Args:
@@ -171,11 +167,7 @@ def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="c
         # Extract product names from the current row
         names = {row[x] for x in product_label if row[x]}
         # Get all unique combinations of names (without repetition)
-        combos = list(
-            chain.from_iterable(
-                combinations(names, r) for r in range(1, len(names) + 1)
-            )
-        )
+        combos = list(chain.from_iterable(combinations(names, r) for r in range(1, len(names) + 1)))
         # Append combinations to the result list with the other column info
         for combo in combos:
             new_data = {idx: row[idx] for idx in row.index if idx not in product_label}
@@ -187,18 +179,12 @@ def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="c
     # Convert the result list to a new dataframe
     new_df = pd.DataFrame(result)
     event_series = new_df.groupby(by=["AE", "product_name"]).sum()["count"]
-    new_df["events"] = new_df.apply(
-        lambda x: event_series[x["AE"]][x["product_name"]], axis=1
-    )
-    new_df.rename(columns={ae_label: "ae_name"}, inplace=True)
+    new_df["events"] = new_df.apply(lambda x: event_series[x["AE"]][x["product_name"]], axis=1)
+    new_df.rename(columns={ae_col: "ae_name"}, inplace=True)
 
     DC = Container()
-    DC.contingency = compute_contingency(
-        new_df, "product_name", "count", "ae_name", min_threshold
-    )
-    DC.data = new_df[
-        ["ae_name", "product_name", "count_across_brands", "product_aes", "events"]
-    ].drop_duplicates()
+    DC.contingency = compute_contingency(new_df, "product_name", "count", "ae_name", min_threshold)
+    DC.data = new_df[["ae_name", "product_name", "count_across_brands", "product_aes", "events"]].drop_duplicates()
     DC.N = new_df["events"].sum()
 
     return DC
