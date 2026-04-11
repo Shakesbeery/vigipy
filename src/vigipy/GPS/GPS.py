@@ -8,6 +8,7 @@ from sympy.functions.special import gamma_functions
 
 from ..utils import AnalysisResult
 from ..utils import calculate_expected
+from ..utils.common import compute_bayesian_metrics, determine_num_signals
 from ..utils.distribution_funcs.negative_binomials import dnbinom, pnbinom
 from ..utils.distribution_funcs.quantile_funcs import quantiles
 
@@ -229,34 +230,10 @@ def gps(
     elif ranking_statistic == "log2":
         RankStat = np.array([x.evalf() for x in EBlog2])
 
-    post_cumsum = np.cumsum(posterior_probability)
-    post_1_cumsum = np.cumsum(1 - posterior_probability)
-    post_1_sum = sum(1 - posterior_probability)
-    post_range = np.arange(1, len(posterior_probability) + 1)
-
-    if ranking_statistic == "p_value":
-        FDR = post_cumsum / np.array(post_range)
-        FNR = np.array(post_1_cumsum) / ((num_cell - post_range) + 1e-7)
-        Se = np.cumsum((1 - posterior_probability)) / post_1_sum
-        Sp = np.array(post_cumsum) / (num_cell - post_1_sum)
-    else:
-        FDR = post_cumsum / post_range
-        FNR = np.array(list(reversed(post_1_cumsum))) / ((num_cell - post_range) + 1e-7)
-        Se = np.cumsum((1 - posterior_probability)) / post_1_sum
-        Sp = np.array(list(reversed(post_cumsum))) / (num_cell - post_1_sum)
-
-    # Number of signals according to the decision rule (pp/FDR/Nb of Signals)
-    if decision_metric == "fdr":
-        num_signals = np.sum(FDR <= decision_thres)
-    elif decision_metric == "signals":
-        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
-    elif decision_metric == "rank":
-        if ranking_statistic == "p_value":
-            num_signals = np.sum(RankStat <= decision_thres)
-        elif ranking_statistic == "quantile":
-            num_signals = np.sum(RankStat >= decision_thres)
-        elif ranking_statistic == "log2":
-            num_signals = np.sum(RankStat >= decision_thres)
+    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic)
+    num_signals = determine_num_signals(
+        FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
+    )
 
     name = DATA["product_name"]
     ae = DATA["ae_name"]

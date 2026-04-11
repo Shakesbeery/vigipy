@@ -1,11 +1,12 @@
-import warnings
 import numpy as np
-import pandas as pd
 from scipy.stats import norm
 
-from ..utils.lbe import lbe
-from ..utils import AnalysisResult
-from ..utils import calculate_expected
+from ..utils.common import (
+    extract_contingency_data,
+    compute_fdr,
+    determine_num_signals,
+    build_freq_result,
+)
 
 
 def prr(
@@ -48,89 +49,26 @@ def prr(
                     parameter is the alpha parameter of the distribution.
 
     """
-    DATA = container.data
-    N = container.N
+    d = extract_contingency_data(container, min_events, expected_method, method_alpha)
 
-    if min_events > 1:
-        DATA = DATA[DATA.events >= min_events]
-
-    n11 = np.asarray(DATA["events"], dtype=np.float64)
-    n1j = np.asarray(DATA["product_aes"], dtype=np.float64)
-    ni1 = np.asarray(DATA["count_across_brands"], dtype=np.float64)
-    num_cell = len(n11)
-    expected = calculate_expected(N, n1j, ni1, n11, expected_method, method_alpha)
-
-    n10 = n1j - n11
-    n01 = ni1 - n11 + 1e-7
-    n00 = N - (n11 + n10 + n01)
-
-    log_prr = np.log((n11 / (n11 + n10)) / (n01 / (n01 + n00)))
-    var_log_prr = 1 / n11 - 1 / (n11 + n10) + 1 / n01 - 1 / (n01 + n00)
+    log_prr = np.log((d["n11"] / (d["n11"] + d["n10"])) / (d["n01"] / (d["n01"] + d["n00"])))
+    var_log_prr = 1 / d["n11"] - 1 / (d["n11"] + d["n10"]) + 1 / d["n01"] - 1 / (d["n01"] + d["n00"])
     pval_uni = 1 - norm.cdf(log_prr, np.log(relative_risk), np.sqrt(var_log_prr))
-    # rankstat = (log_prr - np.log(relative_risk)) / np.sqrt(var_log_prr)
-    pval_uni[pval_uni > 1] = 1
-    pval_uni[pval_uni < 0] = 0
+    pval_uni = np.clip(pval_uni, 0, 1)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        results = lbe(2 * np.minimum(pval_uni, 1 - pval_uni), fdr_level=fdr_threshold)
-    pi_c = results.pi0
-    fdr = pi_c * np.sort(pval_uni[pval_uni <= 0.5]) / (np.arange(1, (pval_uni <= 0.5).sum() + 1) / num_cell)
-
-    fdr = np.concatenate(
-        (
-            fdr,
-            (
-                pi_c / (2 * np.arange(((pval_uni <= 0.5).sum()), num_cell) / num_cell)
-                + 1
-                - (pval_uni <= 0.5).sum() / np.arange((pval_uni <= 0.5).sum(), num_cell)
-            ),
-        ),
-        axis=None,
-    )
-
-    FDR = np.minimum(fdr, np.ones((len(fdr),)))
+    FDR = compute_fdr(pval_uni, d["num_cell"], fdr_threshold)
     if ranking_statistic == "CI":
-        FDR = np.empty((len(n11),))
+        FDR = np.empty((len(d["n11"]),))
 
     LB = norm.ppf(0.025, log_prr, np.sqrt(var_log_prr))
-    if ranking_statistic == "p_value":
-        RankStat = pval_uni
-    else:
-        RankStat = LB
+    RankStat = pval_uni if ranking_statistic == "p_value" else LB
 
-    if decision_metric == "fdr":
-        num_signals = (FDR <= decision_thres).sum()
-    elif decision_metric == "signals":
-        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
-    elif decision_metric == "rank":
-        if ranking_statistic == "p_value":
-            num_signals = (RankStat <= decision_thres).sum()
-        else:
-            num_signals = (RankStat >= decision_thres).sum()
+    num_signals = determine_num_signals(
+        FDR, RankStat, decision_metric, decision_thres, ranking_statistic, d["num_cell"]
+    )
 
-    all_signals = pd.DataFrame(
-        {
-            "Product": DATA["product_name"].values,
-            "Adverse Event": DATA["ae_name"].values,
-            "Count": n11,
-            "Expected Count": expected,
-            "p_value": RankStat,
-            "PRR": np.exp(log_prr),
-            "product margin": n1j,
-            "event margin": ni1,
-            "fdr": FDR,
-        },
-        index=np.arange(len(n11)),
-    ).sort_values(by=["p_value"])
-
-    if ranking_statistic == "CI":
-        all_signals = all_signals.rename(columns={"p_value": "lower_bound_CI(95%)"}).sort_values(
-            by=["lower_bound_CI(95%)"]
-        )
-
-    return AnalysisResult(
-        all_signals=all_signals,
-        signals=all_signals.iloc[0:num_signals],
-        num_signals=num_signals,
+    return build_freq_result(
+        d["DATA"], d["n11"], d["expected"], RankStat,
+        np.exp(log_prr), "PRR",
+        d["n1j"], d["ni1"], FDR, ranking_statistic, num_signals,
     )

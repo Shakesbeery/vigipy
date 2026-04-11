@@ -4,6 +4,7 @@ from scipy.stats import norm
 from sympy.functions.special import gamma_functions
 from ..utils import AnalysisResult
 from ..utils import calculate_expected
+from ..utils.common import compute_bayesian_metrics, determine_num_signals
 
 digamma = np.vectorize(gamma_functions.digamma)
 trigamma = np.vectorize(gamma_functions.trigamma)
@@ -136,26 +137,10 @@ def bcpnn(
     else:
         RankStat = lower_bound
 
-    if ranking_statistic == "p_value":
-        FDR = np.cumsum(posterior_prob) / np.arange(1, len(posterior_prob) + 1)
-        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7)
-        Se = np.cumsum(1 - posterior_prob) / (sum(1 - posterior_prob))
-        Sp = (np.cumsum(posterior_prob)[::-1]) / (num_cell - sum(1 - posterior_prob))
-    else:
-        FDR = np.cumsum(posterior_prob) / np.arange(1, len(posterior_prob) + 1)
-        FNR = (np.cumsum(1 - posterior_prob)[::-1]) / (num_cell - np.arange(1, len(posterior_prob) + 1) + 1e-7)
-        Se = np.cumsum((1 - posterior_prob)) / (sum(1 - posterior_prob))
-        Sp = (np.cumsum(posterior_prob)[::-1]) / (num_cell - sum(1 - posterior_prob))
-
-    if decision_metric == "fdr":
-        num_signals = (FDR <= decision_thres).sum()
-    elif decision_metric == "signals":
-        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
-    elif decision_metric == "rank":
-        if ranking_statistic == "p_value":
-            num_signals = (RankStat <= decision_thres).sum()
-        elif ranking_statistic == "quantile":
-            num_signals = (RankStat >= decision_thres).sum()
+    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_prob, num_cell, ranking_statistic)
+    num_signals = determine_num_signals(
+        FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
+    )
 
     name = DATA["product_name"]
     ae = DATA["ae_name"]
