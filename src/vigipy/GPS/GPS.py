@@ -48,7 +48,7 @@ def gps(
     prior_param=None,
     expected_method="mantel-haentzel",
     method_alpha=1,
-    minimization_method="CG",
+    minimization_method="Nelder-Mead",
     minimization_bounds=((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1)),
     minimization_options=None,
 ):
@@ -84,7 +84,7 @@ def gps(
         The method used to calculate the expected event counts. Options include "mantel-haentzel", "negative-binomial" and "poisson".
     method_alpha : float, optional (default=1)
         Dispersion parameter used in the expected value calculation method.
-    minimization_method : str, optional (default="CG")
+    minimization_method : str, optional (default="Nelder-Mead")
         The optimization method used for estimating prior parameters if `prior_param` is None.
     minimization_bounds : tuple, optional
         Bounds on the prior parameter values for the optimization process.
