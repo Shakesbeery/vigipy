@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from ..utils.lbe import lbe
 from scipy.stats import fisher_exact, hypergeom
-from ..utils import Container
+from ..utils import AnalysisResult
 from ..utils import calculate_expected
 
 
@@ -78,7 +78,7 @@ def rfet(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         results = lbe(2 * np.minimum(pval_uni, 1 - pval_uni))
-    pi_c = results[1]
+    pi_c = results.pi0
     fdr = pi_c * np.sort(pval_uni[pval_uni <= 0.5]) / (np.arange(1, (pval_uni <= 0.5).sum() + 1) / num_cell)
 
     fdr = np.concatenate(
@@ -102,8 +102,7 @@ def rfet(
     elif decision_metric == "rank":
         num_signals = (RankStat <= decision_thres).sum()
 
-    RC = Container()
-    RC.all_signals = pd.DataFrame(
+    all_signals = pd.DataFrame(
         {
             "Product": DATA["product_name"].values,
             "Adverse Event": DATA["ae_name"].values,
@@ -118,8 +117,8 @@ def rfet(
         index=np.arange(len(n11)),
     ).sort_values(by=["p_value"])
 
-    RC.signals = RC.all_signals.iloc[
-        0:num_signals,
-    ]
-    RC.num_signals = num_signals
-    return RC
+    return AnalysisResult(
+        all_signals=all_signals,
+        signals=all_signals.iloc[0:num_signals],
+        num_signals=num_signals,
+    )

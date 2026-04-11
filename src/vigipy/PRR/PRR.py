@@ -4,7 +4,7 @@ import pandas as pd
 from scipy.stats import norm
 
 from ..utils.lbe import lbe
-from ..utils import Container
+from ..utils import AnalysisResult
 from ..utils import calculate_expected
 
 
@@ -74,7 +74,7 @@ def prr(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         results = lbe(2 * np.minimum(pval_uni, 1 - pval_uni), fdr_level=fdr_threshold)
-    pi_c = results[1]
+    pi_c = results.pi0
     fdr = pi_c * np.sort(pval_uni[pval_uni <= 0.5]) / (np.arange(1, (pval_uni <= 0.5).sum() + 1) / num_cell)
 
     fdr = np.concatenate(
@@ -109,8 +109,7 @@ def prr(
         else:
             num_signals = (RankStat >= decision_thres).sum()
 
-    RC = Container()
-    RC.all_signals = pd.DataFrame(
+    all_signals = pd.DataFrame(
         {
             "Product": DATA["product_name"].values,
             "Adverse Event": DATA["ae_name"].values,
@@ -126,12 +125,12 @@ def prr(
     ).sort_values(by=["p_value"])
 
     if ranking_statistic == "CI":
-        RC.all_signals = RC.all_signals.rename(columns={"p_value": "lower_bound_CI(95%)"}).sort_values(
+        all_signals = all_signals.rename(columns={"p_value": "lower_bound_CI(95%)"}).sort_values(
             by=["lower_bound_CI(95%)"]
         )
 
-    RC.signals = RC.all_signals.iloc[
-        0:num_signals,
-    ]
-    RC.num_signals = num_signals
-    return RC
+    return AnalysisResult(
+        all_signals=all_signals,
+        signals=all_signals.iloc[0:num_signals],
+        num_signals=num_signals,
+    )

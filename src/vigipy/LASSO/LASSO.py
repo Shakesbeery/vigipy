@@ -4,7 +4,7 @@ import statsmodels.api as sm
 from sklearn.linear_model import Lasso, LassoLars, LassoLarsIC
 import numpy as np
 
-from ..utils import Container
+from ..utils import AnalysisResult
 
 
 def lasso(
@@ -139,14 +139,12 @@ def lasso(
             res["CI Lower"].append(ci_l)
             res["CI Upper"].append(ci_u)
 
-    RES = Container(params=True)
+    all_signals = pd.DataFrame(res).sort_values(by="LASSO Coefficient", ascending=False)
+    signals = all_signals.loc[all_signals["LASSO Coefficient"] > lasso_thresh]
 
-    # list of the parameters used
-    RES.param = input_params
-    RES.all_signals = pd.DataFrame(res).sort_values(by="LASSO Coefficient", ascending=False)
-    RES.signals = RES.all_signals.loc[RES.all_signals["LASSO Coefficient"] > lasso_thresh]
-
-    # Number of signals
-    RES.num_signals = len(RES.signals)
-
-    return RES
+    return AnalysisResult(
+        all_signals=all_signals,
+        signals=signals,
+        num_signals=len(signals),
+        params=input_params,
+    )

@@ -6,7 +6,7 @@ from scipy.stats import nbinom
 from scipy.optimize import minimize
 from sympy.functions.special import gamma_functions
 
-from ..utils import Container
+from ..utils import AnalysisResult
 from ..utils import calculate_expected
 from ..utils.distribution_funcs.negative_binomials import dnbinom, pnbinom
 from ..utils.distribution_funcs.quantile_funcs import quantiles
@@ -261,16 +261,16 @@ def gps(
     name = DATA["product_name"]
     ae = DATA["ae_name"]
     count = n11
-    RES = Container(params=True)
-    # list of the parameters used
-    RES.param["input_params"] = input_params
-    RES.param["prior_init"] = prior_init
-    RES.param["prior_param"] = priors
-    RES.param["convergence"] = code_convergence
+    params = {
+        "input_params": input_params,
+        "prior_init": prior_init,
+        "prior_param": priors,
+        "convergence": code_convergence,
+    }
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":
-        RES.all_signals = pd.DataFrame(
+        all_signals = pd.DataFrame(
             {
                 "Product": name,
                 "Adverse Event": ae,
@@ -288,7 +288,7 @@ def gps(
         ).sort_values(by=[ranking_statistic])
 
     elif ranking_statistic == "quantile":
-        RES.all_signals = pd.DataFrame(
+        all_signals = pd.DataFrame(
             {
                 "Product": name,
                 "Adverse Event": ae,
@@ -304,10 +304,9 @@ def gps(
                 "Sp": Sp,
                 "posterior_probability": posterior_probability,
             }
-        )
-        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
+        ).sort_values(by=[ranking_statistic], ascending=False)
     else:
-        RES.all_signals = pd.DataFrame(
+        all_signals = pd.DataFrame(
             {
                 "Product": name,
                 "Adverse Event": ae,
@@ -324,23 +323,21 @@ def gps(
                 "LowerBound": LB,
                 "p_value": posterior_probability,
             }
-        )
-        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
+        ).sort_values(by=[ranking_statistic], ascending=False)
 
     # List of Signals generated according to the method
-    RES.all_signals.index = np.arange(0, len(RES.all_signals.index))
+    all_signals.index = np.arange(0, len(all_signals.index))
     if num_signals > 0:
         num_signals -= 1
     else:
         num_signals = 0
-    RES.signals = RES.all_signals.iloc[
-        0:num_signals,
-    ]
 
-    # Number of signals
-    RES.num_signals = num_signals
-
-    return RES
+    return AnalysisResult(
+        all_signals=all_signals,
+        signals=all_signals.iloc[0:num_signals],
+        num_signals=num_signals,
+        params=params,
+    )
 
 
 def non_truncated_likelihood(p, n11, E):

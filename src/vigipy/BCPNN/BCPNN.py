@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from sympy.functions.special import gamma_functions
-from ..utils import Container
+from ..utils import AnalysisResult
 from ..utils import calculate_expected
 
 digamma = np.vectorize(gamma_functions.digamma)
@@ -160,13 +160,10 @@ def bcpnn(
     name = DATA["product_name"]
     ae = DATA["ae_name"]
     count = n11
-    RC = Container(params=True)
-
-    RC.param["input_params"] = input_params
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":
-        RC.all_signals = pd.DataFrame(
+        all_signals = pd.DataFrame(
             {
                 "Product": name,
                 "Adverse Event": ae,
@@ -182,9 +179,9 @@ def bcpnn(
                 "Sp": Sp,
             }
         ).sort_values(by=[ranking_statistic])
-        RC.signals = RC.all_signals.loc[RC.all_signals[ranking_statistic] <= decision_thres]
+        signals = all_signals.loc[all_signals[ranking_statistic] <= decision_thres]
     else:
-        RC.all_signals = pd.DataFrame(
+        all_signals = pd.DataFrame(
             {
                 "Product": name,
                 "Adverse Event": ae,
@@ -200,13 +197,16 @@ def bcpnn(
                 "Sp": Sp,
             }
         ).sort_values(by=[ranking_statistic], ascending=False)
-        RC.signals = RC.all_signals.loc[RC.all_signals[ranking_statistic] >= decision_thres]
+        signals = all_signals.loc[all_signals[ranking_statistic] >= decision_thres]
 
     if num_signals > 0:
         num_signals -= 1
     else:
         num_signals = 0
 
-    # Number of signals
-    RC.num_signals = num_signals
-    return RC
+    return AnalysisResult(
+        all_signals=all_signals,
+        signals=signals,
+        num_signals=num_signals,
+        params={"input_params": input_params},
+    )

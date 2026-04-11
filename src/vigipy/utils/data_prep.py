@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 import numpy as np
 import pandas as pd
 
-from .Container import Container
+from .Container import DataContainer
 
 
 def convert(
@@ -45,12 +45,12 @@ def convert(
     data_df = count(data_cont, row_sums, col_sums)
 
     # Initialize the container object and assign the data
-    DC = Container()
-    DC.contingency = data_cont
-    DC.data = data_df
-    DC.N = data_df["events"].sum()
-    DC.type = "contingency"
-    return DC
+    return DataContainer(
+        data=data_df,
+        N=data_df["events"].sum(),
+        contingency=data_cont,
+        type="contingency",
+    )
 
 
 def compute_contingency(data_frame, product_label, count_label, ae_label, margin_threshold):
@@ -105,8 +105,6 @@ def convert_binary(
         y data with adverse events. Index locations are associated with the input DataFrame.
 
     """
-    DC = Container()
-
     # Sanitize df to remove unnecessary information during transforms
     data = _sanitize_data(data, [product_label, ae_label, count_label])
 
@@ -117,22 +115,23 @@ def convert_binary(
             group_list = [product_label, ae_label]
         data = data.groupby(group_list).sum().reset_index()
         event_df = __transform_dataframe(data, count_label, ae_label)
-        DC.type = "binary_count"
+        dc_type = "binary_count"
     else:
         if data[count_label].max() > 1 and expand_counts:
             data = __expand_dataframe(data, count_label, ae_label, product_label)
         event_df = pd.get_dummies(data[ae_label], prefix="", prefix_sep="")
         event_df = event_df.T.groupby(level=0).sum().T
-        DC.type = "binary"
+        dc_type = "binary"
 
     prod_df = pd.get_dummies(data[product_label], prefix="", prefix_sep="")
-    DC.product_features = prod_df.T.groupby(level=0).sum().T
 
-    DC.event_outcomes = event_df
-    DC.N = data.shape[0]
-    DC.data = data
-
-    return DC
+    return DataContainer(
+        data=data,
+        N=data.shape[0],
+        product_features=prod_df.T.groupby(level=0).sum().T,
+        event_outcomes=event_df,
+        type=dc_type,
+    )
 
 
 def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="count", min_threshold=3):
@@ -182,12 +181,11 @@ def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="c
     new_df["events"] = new_df.apply(lambda x: event_series[x["AE"]][x["product_name"]], axis=1)
     new_df.rename(columns={ae_label: "ae_name"}, inplace=True)
 
-    DC = Container()
-    DC.contingency = compute_contingency(new_df, "product_name", "count", "ae_name", min_threshold)
-    DC.data = new_df[["ae_name", "product_name", "count_across_brands", "product_aes", "events"]].drop_duplicates()
-    DC.N = new_df["events"].sum()
-
-    return DC
+    return DataContainer(
+        data=new_df[["ae_name", "product_name", "count_across_brands", "product_aes", "events"]].drop_duplicates(),
+        N=new_df["events"].sum(),
+        contingency=compute_contingency(new_df, "product_name", "count", "ae_name", min_threshold),
+    )
 
 
 def count(data, rows, cols):

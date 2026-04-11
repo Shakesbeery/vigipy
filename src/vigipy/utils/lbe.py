@@ -1,9 +1,25 @@
 import warnings
+from typing import NamedTuple, Optional
 
 import numpy as np
 from scipy.special import gamma
 from scipy.stats import norm, rankdata
 from scipy.optimize import minimize
+
+
+class LBEResult(NamedTuple):
+    """Result of the Local Bayes Estimation procedure."""
+
+    fdr: Optional[float]
+    pi0: float
+    icpi0: list
+    ci_level: float
+    a: Optional[float]
+    sdbound: float
+    qvalues: Optional[np.ndarray]
+    pvalues: np.ndarray
+    significant: Optional[np.ndarray]
+    n_significant: Optional[int]
 
 
 def lbe(
@@ -61,22 +77,31 @@ def lbe(
 
         if qvalues:
             significant = qval[rank_pval] <= fdr_level
-            r = [
-                fdr,
-                pi0,
-                icpi0,
-                ci_level,
-                a,
-                sdbound,
-                qval[rank_pval],
-                pvals,
-                significant,
-                (significant[significant == True]).sum(),
-            ]
+            return LBEResult(
+                fdr=fdr,
+                pi0=pi0,
+                icpi0=icpi0,
+                ci_level=ci_level,
+                a=a,
+                sdbound=sdbound,
+                qvalues=qval[rank_pval],
+                pvalues=pvals,
+                significant=significant,
+                n_significant=significant.sum(),
+            )
         else:
-            r = [None, pi0, icpi0, ci_level, a, sdbound, None, pvals, None, None]
-
-    return r
+            return LBEResult(
+                fdr=None,
+                pi0=pi0,
+                icpi0=icpi0,
+                ci_level=ci_level,
+                a=a,
+                sdbound=sdbound,
+                qvalues=None,
+                pvalues=pvals,
+                significant=None,
+                n_significant=None,
+            )
 
 
 def lbe_a(m, l):
