@@ -1,5 +1,4 @@
-﻿import sys
-import numpy as np
+﻿import numpy as np
 
 
 def lgammacor(x):
@@ -36,8 +35,7 @@ def lgammacor(x):
     if x < 10:
         return np.nan
     elif x >= xmax:
-        print("Underflow...")
-        sys.exit()
+        raise OverflowError(f"lgammacor underflow: x ({x}) >= xmax ({xmax})")
     elif x < xbig:
         tmp = 10 / x
         return chebyshev_eval(tmp * tmp * 2 - 1, algmcs, nalgm) / x

@@ -1,5 +1,5 @@
-﻿import sys
-import math
+﻿import math
+import sys
 import numpy
 from .lgammafn import lgammafn
 from .bratio import bratio
@@ -25,13 +25,9 @@ def pbeta_raw(x, a, b, lower_tail, log_p=False):
     x1 = 0.5 - x + 0.5
     w, wc, ierr = bratio(a, b, x, x1, log_p)
     if ierr != 0 and ierr != 11 and ierr != 14:
-        print(
-            """pbeta_raw({0}, a={1}, b={2}, ..) ->
-                 bratio() gave error code {3}""".format(
-                x, a, b, ierr
-            )
+        raise RuntimeError(
+            f"pbeta_raw({x}, a={a}, b={b}, ..) -> bratio() gave error code {ierr}"
         )
-        sys.exit()
     return w if lower_tail else wc
 
 

@@ -1,5 +1,4 @@
-﻿import sys
-import math
+﻿import math
 from .lgammacor import lgammacor
 from .bratio import Rf_d1mach as d1mach
 
@@ -53,8 +52,9 @@ def lgammafn_sign(x, sgn):
     ans = M_LN_SQRT_PId2 + (x - 0.5) * math.log(y) - x - math.log(sinpiy) - lgammacor(y)
 
     if math.fabs((x - math.trunc(x - 0.5)) * ans / x) < dxrel:
-        print("The answer is less than half precision...")
-        sys.exit()
+        raise ArithmeticError(
+            f"lgammafn_sign: result for x={x} is less than half precision"
+        )
 
     return ans
 

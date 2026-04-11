@@ -140,11 +140,9 @@ def calculate_expected(N, n1j, ni1, n11, method="mantel-haentzel", alpha=1):
         The expected counts for n11
 
     """
-    try:
-        assert method in ("mantel-haentzel", "negative-binomial", "poisson")
-    except AssertionError:
-        err_msg = "{0} not a supported method. Please choose from {1}"
-        raise AssertionError(err_msg.format(method, ("mantel-haentzel", "negative-binomial", "poisson")))
+    supported = ("mantel-haentzel", "negative-binomial", "poisson")
+    if method not in supported:
+        raise ValueError(f"{method!r} is not a supported method. Choose from {supported}")
 
     if method == "mantel-haentzel":
         return __mh(N, n1j, ni1)
@@ -152,11 +150,11 @@ def calculate_expected(N, n1j, ni1, n11, method="mantel-haentzel", alpha=1):
         try:
             return __stats_method(n1j, ni1, n11, sm.families.NegativeBinomial(alpha=alpha))
         except PerfectSeparationError:
-            print("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
+            warnings.warn("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
             return __mh(N, n1j, ni1)
     elif method == "poisson":
         try:
             return __stats_method(n1j, ni1, n11, sm.families.Poisson())
         except PerfectSeparationError:
-            print("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
+            warnings.warn("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
             return __mh(N, n1j, ni1)

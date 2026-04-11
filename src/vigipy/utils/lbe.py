@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 from scipy.special import gamma
 from scipy.stats import norm, rankdata
@@ -50,14 +52,11 @@ def lbe(
                 try:
                     fdr = max(np.amax(mat[mat[:, 1] <= fdr_level, 1]), 0)
                 except ValueError:
-                    print("No data matches the specified FDR threshold. Setting FDR to 0.")
+                    warnings.warn("No data matches the specified FDR threshold. Setting FDR to 0.")
 
         if sdbound > 0.5:
-            print(
-                """WARNING: l = {0}. A smaller value is
-                    recommended for a (or l).""".format(
-                    sdbound
-                )
+            warnings.warn(
+                f"l = {sdbound}. A smaller value is recommended for a (or l)."
             )
 
         if qvalues:

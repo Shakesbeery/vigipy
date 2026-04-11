@@ -1,5 +1,6 @@
+import warnings
+
 import pandas as pd
-import traceback
 from ..utils import convert, convert_binary, convert_multi_item
 
 
@@ -93,11 +94,10 @@ class LongitudinalModel:
         try:
             da_results = model(sub_container, **kwargs)
             self.results.append((timestamp, da_results))
-        except ValueError as e:
-            print(traceback.format_exc())
+        except ValueError:
+            warnings.warn(f"Insufficient data for this model. Skipping time slice: {timestamp}")
             if include_gaps:
                 self.results.append((timestamp, None))
-            print(f"Insufficient data for this model. Skipping this slice: {timestamp}")
 
     def regroup_dates(self, time_unit):
         """
