@@ -122,17 +122,8 @@ def lasso(
                 y_bootstrap = y[bootstrap_sample_indices]
 
                 # Fit LASSO model to bootstrap sample
-                if use_glm:
-                    nb = sm.GLM(
-                        y_bootstrap,
-                        X_bootstrap,
-                        family=sm.families.NegativeBinomial(alpha=nb_alpha),
-                    )
-                    results = nb.fit_regularized(L1_wt=1)
-                    boot_coefs = results.params.values.copy()
-                else:
-                    lasso.fit(X_bootstrap, y_bootstrap)
-                    boot_coefs = lasso.coef_.copy()
+                lasso.fit(X_bootstrap, y_bootstrap)
+                boot_coefs = lasso.coef_.copy()
                 bootstrap_coefficients.append(boot_coefs)
 
             bootstrap_coefficients = np.array(bootstrap_coefficients)

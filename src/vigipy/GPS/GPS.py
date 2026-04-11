@@ -129,6 +129,7 @@ def gps(
     ni1 = np.asarray(DATA["count_across_brands"], dtype=np.float64)
     expected = calculate_expected(N, n1j, ni1, n11, expected_method, method_alpha)
     p_out = True
+    code_convergence = "User-provided priors"
 
     if prior_param is None:
         p_out = False

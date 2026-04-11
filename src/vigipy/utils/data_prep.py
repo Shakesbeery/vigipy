@@ -142,8 +142,8 @@ def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="c
     Args:
         df (pd.DataFrame): A dataframe where each row is a unique adverse event and has multiple columns
         indicating the presence of multiple devices/drugs/interventions.
-        product_cols (list, optional): A list of column names associated with the co-occuring products. Defaults to ["name"].
-        ae_col (str, optional): The column name that contains the adverse events. Defaults to "AE".
+        product_label (list, optional): A list of column names associated with the co-occuring products. Defaults to ["name"].
+        ae_label (str, optional): The column name that contains the adverse events. Defaults to "AE".
         min_threshold (int, optional): The minimum number of events required to keep a drug/device-event pair.
 
     Returns:
@@ -180,7 +180,7 @@ def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="c
     new_df = pd.DataFrame(result)
     event_series = new_df.groupby(by=["AE", "product_name"]).sum()["count"]
     new_df["events"] = new_df.apply(lambda x: event_series[x["AE"]][x["product_name"]], axis=1)
-    new_df.rename(columns={ae_col: "ae_name"}, inplace=True)
+    new_df.rename(columns={ae_label: "ae_name"}, inplace=True)
 
     DC = Container()
     DC.contingency = compute_contingency(new_df, "product_name", "count", "ae_name", min_threshold)

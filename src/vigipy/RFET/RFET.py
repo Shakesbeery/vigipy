@@ -18,7 +18,7 @@ def rfet(
     method_alpha=1,
 ):
     """
-    Calculate the proportional reporting ratio.
+    Calculate the Reporting Fisher's Exact Test.
 
     Arguments:
         container: A DataContainer object produced by the convert()
@@ -110,7 +110,7 @@ def rfet(
             "Count": n11,
             "Expected Count": expected,
             "p_value": RankStat,
-            "PRR": np.exp(log_rfet),
+            "RFET": np.exp(log_rfet),
             "product margin": n1j,
             "event margin": ni1,
             "fdr": FDR,

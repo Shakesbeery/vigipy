@@ -18,7 +18,7 @@ def ror(
     method_alpha=1,
 ):
     """
-    Calculate the proportional reporting ratio.
+    Calculate the reporting odds ratio.
 
     Arguments:
         container: A DataContainer object produced by the convert()
@@ -116,7 +116,7 @@ def ror(
             "Count": n11,
             "Expected Count": expected,
             "p_value": RankStat,
-            "PRR": np.exp(log_ror),
+            "ROR": np.exp(log_ror),
             "product margin": n1j,
             "event margin": ni1,
             "fdr": FDR,
