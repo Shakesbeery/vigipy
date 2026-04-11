@@ -1,27 +1,31 @@
-import pandas as pd
+from __future__ import annotations
+
 from collections import defaultdict
+from typing import Literal
+
+import numpy as np
+import pandas as pd
 import statsmodels.api as sm
 from sklearn.linear_model import Lasso, LassoLars, LassoLarsIC
-import numpy as np
 
-from ..utils import AnalysisResult
+from ..utils.Container import AnalysisResult, DataContainer
 
 
 def lasso(
-    container,
-    lasso_thresh=0,
-    alpha=0.5,
-    min_events=3,
-    num_bootstrap=10,
-    ci=95,
-    use_lars=False,
-    use_IC=False,
-    IC_criterion="bic",
-    lasso_kwargs=None,
-    use_glm=False,
-    nb_alpha=1,
-    lasso_alpha=1e-9,
-):
+    container: DataContainer,
+    lasso_thresh: float = 0,
+    alpha: float = 0.5,
+    min_events: int = 3,
+    num_bootstrap: int = 10,
+    ci: int = 95,
+    use_lars: bool = False,
+    use_IC: bool = False,
+    IC_criterion: Literal["aic", "bic"] = "bic",
+    lasso_kwargs: dict | None = None,
+    use_glm: bool = False,
+    nb_alpha: float = 1,
+    lasso_alpha: float = 1e-9,
+) -> AnalysisResult:
     """
     Applies LASSO regression or its variants to detect signals between product features and adverse events,
     optionally using bootstrap confidence intervals.
@@ -70,8 +74,19 @@ def lasso(
     - Confidence intervals for the LASSO coefficients are generated via bootstrapping iff `use_glm` is False.
     - The function iterates over adverse events, using product features as predictors, and applies the chosen LASSO model to find associations.
     """
-    input_params = locals()
-    del input_params["container"]
+    input_params = {
+        "lasso_thresh": lasso_thresh,
+        "alpha": alpha,
+        "min_events": min_events,
+        "num_bootstrap": num_bootstrap,
+        "ci": ci,
+        "use_lars": use_lars,
+        "use_IC": use_IC,
+        "IC_criterion": IC_criterion,
+        "use_glm": use_glm,
+        "nb_alpha": nb_alpha,
+        "lasso_alpha": lasso_alpha,
+    }
     X = container.product_features
     ys = container.event_outcomes
     res = defaultdict(list)

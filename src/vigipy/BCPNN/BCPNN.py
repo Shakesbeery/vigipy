@@ -2,61 +2,40 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from sympy.functions.special import gamma_functions
-from ..utils import AnalysisResult
+
+from ..utils.Container import AnalysisResult, DataContainer
 from ..utils import calculate_expected
 from ..utils.common import compute_bayesian_metrics, determine_num_signals
+from ..utils.types import DecisionMetric, RankingStatistic, ExpectedMethod
 
 digamma = np.vectorize(gamma_functions.digamma)
 trigamma = np.vectorize(gamma_functions.trigamma)
 
 
 def bcpnn(
-    container,
-    relative_risk=1,
-    min_events=1,
-    decision_metric="rank",
-    decision_thres=0.05,
-    ranking_statistic="quantile",
-    MC=False,
-    num_MC=10000,
-    expected_method="mantel-haentzel",
-    method_alpha=1,
-):
-    """
-    A Bayesian Confidence Propogation Neural Network.
-
-    Arguments:
-        container: A DataContainer object produced by the convert()
-                    function from data_prep.py
-
-        relative_risk (int/float): The relative risk value
-
-        min_events: The min number of AE reports to be considered a signal
-
-        decision_metric (str): The metric used for detecting signals:
-                            {fdr = false detection rate,
-                            signals = number of signals,
-                            rank = ranking statistic}
-
-        decision_thres (float): The min thres value for the decision_metric
-
-        ranking_statistic (str): How to rank signals:
-                            {'p_value' = posterior prob of the null hypothesis,
-                            'quantile' = 2.5% quantile of the IC}
-
-        MC (Bool): Use Monte Carlo simulations to make results more robust?
-
-        num_mc (int): Number of MC simulations to run
-
-        expected_method: The method of calculating the expected counts for
-                        the disproportionality analysis.
-
-        method_alpha: If the expected_method is negative-binomial, this
-                    parameter is the alpha parameter of the distribution.
-
-    """
-    input_params = locals()
-    del input_params["container"]
+    container: DataContainer,
+    relative_risk: float = 1,
+    min_events: int = 1,
+    decision_metric: DecisionMetric = "rank",
+    decision_thres: float = 0.05,
+    ranking_statistic: RankingStatistic = "quantile",
+    MC: bool = False,
+    num_MC: int = 10000,
+    expected_method: ExpectedMethod = "mantel-haentzel",
+    method_alpha: float = 1,
+) -> AnalysisResult:
+    """A Bayesian Confidence Propagation Neural Network."""
+    input_params = {
+        "relative_risk": relative_risk,
+        "min_events": min_events,
+        "decision_metric": decision_metric,
+        "decision_thres": decision_thres,
+        "ranking_statistic": ranking_statistic,
+        "MC": MC,
+        "num_MC": num_MC,
+        "expected_method": expected_method,
+        "method_alpha": method_alpha,
+    }
 
     DATA = container.data
     N = container.N

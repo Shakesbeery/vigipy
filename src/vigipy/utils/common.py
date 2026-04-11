@@ -1,19 +1,28 @@
 """Shared utility functions for disproportionality analysis methods."""
 
+from __future__ import annotations
+
 import warnings
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from .lbe import lbe
-from .Container import AnalysisResult
+from .Container import AnalysisResult, DataContainer
 from .expectations import calculate_expected
+from .types import DecisionMetric, RankingStatistic, ExpectedMethod
 
 # Small constant added to denominators to prevent division by zero
 DIVISION_EPSILON = 1e-7
 
 
-def extract_contingency_data(container, min_events, expected_method, method_alpha):
+def extract_contingency_data(
+    container: DataContainer,
+    min_events: int,
+    expected_method: ExpectedMethod,
+    method_alpha: float,
+) -> dict[str, Any]:
     """Extract and prepare the 2x2 contingency table components from a container.
 
     Returns a dict with keys: DATA, N, n11, n1j, ni1, num_cell, expected,
@@ -49,11 +58,10 @@ def extract_contingency_data(container, min_events, expected_method, method_alph
     }
 
 
-def compute_fdr(pval_uni, num_cell, fdr_threshold=0.05):
-    """Compute FDR using local Bayes estimation (LBE).
-
-    Returns the FDR array and the pi0 estimate.
-    """
+def compute_fdr(
+    pval_uni: np.ndarray, num_cell: int, fdr_threshold: float = 0.05
+) -> np.ndarray:
+    """Compute FDR using local Bayes estimation (LBE)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         results = lbe(2 * np.minimum(pval_uni, 1 - pval_uni), fdr_level=fdr_threshold)
@@ -79,8 +87,14 @@ def compute_fdr(pval_uni, num_cell, fdr_threshold=0.05):
     return np.minimum(fdr, np.ones((len(fdr),)))
 
 
-def determine_num_signals(FDR, RankStat, decision_metric, decision_thres,
-                          ranking_statistic, num_cell):
+def determine_num_signals(
+    FDR: np.ndarray,
+    RankStat: np.ndarray,
+    decision_metric: DecisionMetric,
+    decision_thres: float,
+    ranking_statistic: RankingStatistic,
+    num_cell: int,
+) -> int:
     """Determine the number of signals based on the decision rule."""
     if decision_metric == "fdr":
         return int((FDR <= decision_thres).sum())
@@ -94,7 +108,9 @@ def determine_num_signals(FDR, RankStat, decision_metric, decision_thres,
     return 0
 
 
-def compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic):
+def compute_bayesian_metrics(
+    posterior_probability: np.ndarray, num_cell: int, ranking_statistic: RankingStatistic
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute FDR, FNR, sensitivity, and specificity from posterior probabilities.
 
     Used by Bayesian methods (BCPNN, GPS).
@@ -117,12 +133,20 @@ def compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic)
     return FDR, FNR, Se, Sp
 
 
-def build_freq_result(DATA, n11, expected, RankStat, stat_values, stat_column_name,
-                      n1j, ni1, FDR, ranking_statistic, num_signals):
-    """Build the AnalysisResult for frequentist methods (PRR, ROR, RFET).
-
-    Constructs the all_signals DataFrame and returns an AnalysisResult.
-    """
+def build_freq_result(
+    DATA: pd.DataFrame,
+    n11: np.ndarray,
+    expected: np.ndarray,
+    RankStat: np.ndarray,
+    stat_values: np.ndarray,
+    stat_column_name: str,
+    n1j: np.ndarray,
+    ni1: np.ndarray,
+    FDR: np.ndarray,
+    ranking_statistic: RankingStatistic,
+    num_signals: int,
+) -> AnalysisResult:
+    """Build the AnalysisResult for frequentist methods (PRR, ROR, RFET)."""
     all_signals = pd.DataFrame(
         {
             "Product": DATA["product_name"].values,

@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.stats import norm
 
+from ..utils.Container import AnalysisResult, DataContainer
+from ..utils.types import DecisionMetric, RankingStatistic, ExpectedMethod
 from ..utils.common import (
     extract_contingency_data,
     compute_fdr,
@@ -10,44 +12,16 @@ from ..utils.common import (
 
 
 def ror(
-    container,
-    relative_risk=1,
-    min_events=1,
-    decision_metric="fdr",
-    decision_thres=0.05,
-    ranking_statistic="p_value",
-    expected_method="mantel-haentzel",
-    method_alpha=1,
-):
-    """
-    Calculate the reporting odds ratio.
-
-    Arguments:
-        container: A DataContainer object produced by the convert()
-                    function from data_prep.py
-
-        relative_risk (int/float): The relative risk value
-
-        min_events: The min number of AE reports to be considered a signal
-
-        decision_metric (str): The metric used for detecting signals:
-                            {fdr = false detection rate,
-                            signals = number of signals,
-                            rank = ranking statistic}
-
-        decision_thres (float): The min thres value for the decision_metric
-
-        ranking_statistic (str): How to rank signals:
-                            {'p_value' = posterior prob of the null hypothesis,
-                            'CI' = 95% CI lower boundary}
-
-        expected_method: The method of calculating the expected counts for
-                        the disproportionality analysis.
-
-        method_alpha: If the expected_method is negative-binomial, this
-                    parameter is the alpha parameter of the distribution.
-
-    """
+    container: DataContainer,
+    relative_risk: float = 1,
+    min_events: int = 1,
+    decision_metric: DecisionMetric = "fdr",
+    decision_thres: float = 0.05,
+    ranking_statistic: RankingStatistic = "p_value",
+    expected_method: ExpectedMethod = "mantel-haentzel",
+    method_alpha: float = 1,
+) -> AnalysisResult:
+    """Calculate the reporting odds ratio."""
     d = extract_contingency_data(container, min_events, expected_method, method_alpha)
 
     log_ror = np.log(d["n11"] * d["n00"] / (d["n10"] * d["n01"]))
