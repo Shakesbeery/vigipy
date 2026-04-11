@@ -23,7 +23,6 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 * numpy>=1.24,<3
 * scipy>=1.10
 * scikit-learn>=1.3
-* sympy>=1.12
 * statsmodels>=0.14
 
 ### Installation

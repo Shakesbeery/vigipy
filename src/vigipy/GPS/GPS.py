@@ -3,22 +3,17 @@
 import warnings
 import numpy as np
 import pandas as pd
-from scipy.special import gdtr
+from scipy.special import digamma, gdtr
 from scipy.stats import nbinom
 from scipy.optimize import minimize
-from sympy.functions.special import gamma_functions
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils import calculate_expected
 from ..utils.common import compute_bayesian_metrics, determine_num_signals
 from ..utils.types import DecisionMetric, RankingStatistic, ExpectedMethod
-from ..utils.distribution_funcs.negative_binomials import dnbinom, pnbinom
-from ..utils.distribution_funcs.quantile_funcs import quantiles
+from ..utils.distribution_funcs.quantile_funcs import quantiles as _quantiles_scalar
 
-dnbinom = np.vectorize(dnbinom)
-pnbinom = np.vectorize(pnbinom)
-digamma = np.vectorize(gamma_functions.digamma)
-quantiles = np.vectorize(quantiles)
+quantiles = np.vectorize(_quantiles_scalar)
 
 EPS = np.finfo(np.float32).eps
 BOUNDED_METHODS = {

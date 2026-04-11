@@ -1,15 +1,12 @@
 import numpy as np
 import pandas as pd
+from scipy.special import digamma, polygamma
 from scipy.stats import norm
-from sympy.functions.special import gamma_functions
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils import calculate_expected
 from ..utils.common import compute_bayesian_metrics, determine_num_signals
 from ..utils.types import DecisionMetric, RankingStatistic, ExpectedMethod
-
-digamma = np.vectorize(gamma_functions.digamma)
-trigamma = np.vectorize(gamma_functions.trigamma)
 
 
 def bcpnn(
@@ -68,9 +65,9 @@ def bcpnn(
         IC_variance = np.asarray(
             (np.log(2) ** -2)
             * (
-                trigamma(r1)
-                - trigamma(r1 + r2b)
-                + (trigamma(p1) - trigamma(p1 + p2) + trigamma(q1) - trigamma(q1 + q2))
+                polygamma(1, r1)
+                - polygamma(1, r1 + r2b)
+                + (polygamma(1, p1) - polygamma(1, p1 + p2) + polygamma(1, q1) - polygamma(1, q1 + q2))
             ),
             dtype=np.float64,
         )
