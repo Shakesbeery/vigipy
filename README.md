@@ -19,35 +19,30 @@ vigipy is a project to bring modern disproportionality analyses and pharmacovigi
 
 #### For vigipy
 
-* pandas==2.2.2
-* numpy<2
-* scipy==1.13.1
-* scikit-learn==1.5.1
-* sympy==1.12
-* statsmodels==0.14.2
+* pandas>=2.0
+* numpy>=1.24,<3
+* scipy>=1.10
+* scikit-learn>=1.3
+* sympy>=1.12
+* statsmodels>=0.14
 
 ### Installation
 
-To install, navigate to the root directory of the repository and from the command line/terminal run:
-
 ```bash
-python setup.py install
+pip install .
 ```
 
-OR
+Or for development (editable install with dev tools):
 
 ```bash
-python setup.py bdist_wheel
-pip install dist\<WheelName>
+pip install -e ".[dev]"
 ```
-
-You should now be able to import the vigipy library in your code.
 
 #### Unit Tests
 From the root directory of the repository, run:
 
 ```bash
-python -m unittest discover -s test -p "*Test.py"
+python -m pytest test/ -v
 ```
 
 ## Usage
@@ -161,7 +156,7 @@ for the presence of possible drug/device interactions.
 from vigipy.utils.data_prep import convert_multi_item
 
 # Takes an arbitrary number of column names that correspond to co-occurring drugs/devices/etc.
-convert_multi_item(data, product_cols=["name", "name2", "name3"], ae_col="AE")
+convert_multi_item(data, product_label=["name", "name2", "name3"], ae_label="AE")
 ```
 
 ***Note:*** The output has some assumptions:

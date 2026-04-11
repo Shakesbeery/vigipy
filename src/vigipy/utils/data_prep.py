@@ -122,11 +122,11 @@ def convert_binary(
         if data[count_label].max() > 1 and expand_counts:
             data = __expand_dataframe(data, count_label, ae_label, product_label)
         event_df = pd.get_dummies(data[ae_label], prefix="", prefix_sep="")
-        event_df = event_df.groupby(by=event_df.columns, axis=1).sum()
+        event_df = event_df.T.groupby(level=0).sum().T
         DC.type = "binary"
 
     prod_df = pd.get_dummies(data[product_label], prefix="", prefix_sep="")
-    DC.product_features = prod_df.groupby(by=prod_df.columns, axis=1).sum()
+    DC.product_features = prod_df.T.groupby(level=0).sum().T
 
     DC.event_outcomes = event_df
     DC.N = data.shape[0]
