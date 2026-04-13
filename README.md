@@ -46,18 +46,42 @@ python -m pytest test/ -v
 
 ## Usage
 
-### Load data and apply model
+### Unified API (recommended)
 
 ```python
-from vigipy import *
+from vigipy import convert, analyze, analyze_all, PRRConfig, BCPNNConfig
 import pandas as pd
 
-#This is expected to have columns: ['AE', 'name', 'count'] ('date' is optional for longitudinal models)
 df = pd.read_csv('AE_count_data.csv')
-vivipy_data = convert(df)
+data = convert(df)
 
-results = gps(vigipy_data, min_events=5, decision_metric='rank',
-              decision_thres=1, ranking_statistic='log2', minimization_method="Nelder-Mead")
+# Run a single method with typed configuration
+result = analyze(data, PRRConfig(min_events=3, decision_metric="rank"))
+result.signals.to_excel('prr_signals.xlsx', index=False)
+
+# Compare multiple methods in one call
+results = analyze_all(data, min_events=3, decision_metric="rank")
+for method, result in results.items():
+    print(f"{method}: {result.num_signals} signals detected")
+
+# Loop with custom configs
+configs = [PRRConfig(min_events=5), BCPNNConfig(min_events=5, ranking_statistic="quantile")]
+for cfg in configs:
+    result = analyze(data, cfg)
+    print(f"{cfg.method}: {result.num_signals} signals")
+```
+
+### Classic function API
+
+```python
+from vigipy import convert, gps
+import pandas as pd
+
+df = pd.read_csv('AE_count_data.csv')
+data = convert(df)
+
+results = gps(data, min_events=5, decision_metric='rank',
+              decision_thres=1, ranking_statistic='log2')
 results.signals.to_excel('possible_signals.xlsx', index=False)
 ```
 

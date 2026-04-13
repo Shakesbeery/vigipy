@@ -5,8 +5,8 @@ from scipy.stats import norm
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils import calculate_expected
-from ..utils.common import compute_bayesian_metrics, determine_num_signals
-from ..utils.types import DecisionMetric, RankingStatistic, ExpectedMethod
+from ..utils.common import compute_bayesian_metrics, determine_num_signals, build_params
+from ..utils.types import DecisionMetric, BCPNNRankingStatistic, ExpectedMethod
 
 
 def bcpnn(
@@ -15,7 +15,7 @@ def bcpnn(
     min_events: int = 1,
     decision_metric: DecisionMetric = "rank",
     decision_thres: float = 0.05,
-    ranking_statistic: RankingStatistic = "quantile",
+    ranking_statistic: BCPNNRankingStatistic = "quantile",
     MC: bool = False,
     num_MC: int = 10000,
     expected_method: ExpectedMethod = "mantel-haentzel",
@@ -169,5 +169,5 @@ def bcpnn(
         all_signals=all_signals,
         signals=signals,
         num_signals=num_signals,
-        params={"input_params": input_params},
+        params=build_params("bcpnn", input_params),
     )

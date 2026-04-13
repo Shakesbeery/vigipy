@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 from scipy.stats import fisher_exact, hypergeom
 
@@ -8,6 +10,7 @@ from ..utils.common import (
     compute_fdr,
     determine_num_signals,
     build_freq_result,
+    build_params,
 )
 
 
@@ -20,8 +23,15 @@ def rfet(
     mid_pval: bool = False,
     expected_method: ExpectedMethod = "mantel-haentzel",
     method_alpha: float = 1,
+    fdr_threshold: float = 0.05,
 ) -> AnalysisResult:
     """Calculate the Reporting Fisher's Exact Test."""
+    if relative_risk != 1:
+        warnings.warn(
+            "relative_risk is unused in rfet() and will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     d = extract_contingency_data(container, min_events, expected_method, method_alpha)
     n11, n10, n01, n00 = d["n11"], d["n10"], d["n01"], d["n00"]
 
@@ -41,13 +51,20 @@ def rfet(
     pval_uni = np.clip(pval_fish_uni, 0, 1)
     RankStat = pval_uni
 
-    FDR = compute_fdr(pval_uni, d["num_cell"])
+    FDR = compute_fdr(pval_uni, d["num_cell"], fdr_threshold)
     num_signals = determine_num_signals(
         FDR, RankStat, decision_metric, decision_thres, "p_value", d["num_cell"]
     )
 
+    params = build_params("rfet", {
+        "min_events": min_events, "decision_metric": decision_metric,
+        "decision_thres": decision_thres, "mid_pval": mid_pval,
+        "expected_method": expected_method, "method_alpha": method_alpha,
+        "fdr_threshold": fdr_threshold,
+    })
+
     return build_freq_result(
         d["DATA"], n11, d["expected"], RankStat,
         np.exp(log_rfet), "RFET",
-        d["n1j"], d["ni1"], FDR, "p_value", num_signals,
+        d["n1j"], d["ni1"], FDR, "p_value", num_signals, params,
     )

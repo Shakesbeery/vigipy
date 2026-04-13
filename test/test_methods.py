@@ -2,7 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from vigipy import bcpnn, gps, prr, ror, rfet, lasso, LongitudinalModel
+from vigipy import (
+    bcpnn, gps, prr, ror, rfet, lasso, LongitudinalModel,
+    analyze, analyze_all, get_default_config,
+    PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, LASSOConfig,
+)
 
 METHODS = ("mantel-haentzel", "negative-binomial", "poisson")
 METRICS = ("fdr", "signals", "rank")
@@ -282,7 +286,8 @@ class TestLASSO:
     def test_stores_params(self, binary_data):
         result = lasso(binary_data, lasso_thresh=0.1, min_events=3)
         assert hasattr(result, "param")
-        assert "lasso_thresh" in result.param
+        assert result.param["method"] == "lasso"
+        assert "lasso_thresh" in result.param["input_params"]
 
 
 # ---------------------------------------------------------------------------
@@ -314,3 +319,63 @@ class TestLongitudinalModel:
         lm = LongitudinalModel(sample_df.copy(), "A")
         lm.regroup_dates("Q")
         assert lm.time_unit == "Q"
+
+
+# ---------------------------------------------------------------------------
+# Unified Interface Tests
+# ---------------------------------------------------------------------------
+
+class TestAnalyze:
+    def test_prr_via_analyze(self, converted_data):
+        result = analyze(converted_data, PRRConfig(min_events=3, decision_metric="rank"))
+        assert_valid_result(result)
+        top = result.all_signals.iloc[0]
+        assert top["Product"] == "XENMATRIX"
+        np.testing.assert_allclose(top["PRR"], 5.200984, rtol=1e-4)
+        assert result.params["method"] == "prr"
+
+    def test_loop_over_methods(self, converted_data):
+        configs = [
+            PRRConfig(min_events=3),
+            RORConfig(min_events=3),
+            RFETConfig(min_events=3),
+            BCPNNConfig(min_events=3),
+        ]
+        for cfg in configs:
+            result = analyze(converted_data, cfg)
+            assert_valid_result(result)
+            assert result.params["method"] == cfg.method
+            assert "input_params" in result.params
+
+    def test_analyze_all(self, converted_data):
+        results = analyze_all(converted_data, min_events=3)
+        assert set(results.keys()) == {"prr", "ror", "rfet", "bcpnn", "gps"}
+        for name, result in results.items():
+            assert_valid_result(result)
+            assert result.params["method"] == name
+
+    def test_lasso_via_analyze(self, binary_data):
+        result = analyze(binary_data, LASSOConfig(min_events=3, lasso_thresh=0.1))
+        assert_valid_result(result)
+        assert result.params["method"] == "lasso"
+
+    def test_params_standardized(self, converted_data):
+        for cfg in [PRRConfig(min_events=3), BCPNNConfig(min_events=3)]:
+            result = analyze(converted_data, cfg)
+            assert "method" in result.params
+            assert "input_params" in result.params
+
+    def test_config_immutable(self):
+        cfg = PRRConfig(min_events=3)
+        with pytest.raises(AttributeError):
+            cfg.min_events = 5
+
+    def test_get_default_config(self):
+        cfg = get_default_config("prr")
+        assert cfg.method == "prr"
+        assert cfg.min_events == 1
+        assert cfg.decision_metric == "fdr"
+
+    def test_get_default_config_invalid(self):
+        with pytest.raises(ValueError):
+            get_default_config("invalid")

@@ -2,12 +2,13 @@ import numpy as np
 from scipy.stats import norm
 
 from ..utils.Container import AnalysisResult, DataContainer
-from ..utils.types import DecisionMetric, RankingStatistic, ExpectedMethod
+from ..utils.types import DecisionMetric, FreqRankingStatistic, ExpectedMethod
 from ..utils.common import (
     extract_contingency_data,
     compute_fdr,
     determine_num_signals,
     build_freq_result,
+    build_params,
 )
 
 
@@ -17,7 +18,7 @@ def prr(
     min_events: int = 1,
     decision_metric: DecisionMetric = "fdr",
     decision_thres: float = 0.05,
-    ranking_statistic: RankingStatistic = "p_value",
+    ranking_statistic: FreqRankingStatistic = "p_value",
     expected_method: ExpectedMethod = "mantel-haentzel",
     method_alpha: float = 1,
     fdr_threshold: float = 0.05,
@@ -41,8 +42,15 @@ def prr(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, d["num_cell"]
     )
 
+    params = build_params("prr", {
+        "relative_risk": relative_risk, "min_events": min_events,
+        "decision_metric": decision_metric, "decision_thres": decision_thres,
+        "ranking_statistic": ranking_statistic, "expected_method": expected_method,
+        "method_alpha": method_alpha, "fdr_threshold": fdr_threshold,
+    })
+
     return build_freq_result(
         d["DATA"], d["n11"], d["expected"], RankStat,
         np.exp(log_prr), "PRR",
-        d["n1j"], d["ni1"], FDR, ranking_statistic, num_signals,
+        d["n1j"], d["ni1"], FDR, ranking_statistic, num_signals, params,
     )

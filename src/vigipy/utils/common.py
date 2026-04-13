@@ -17,6 +17,17 @@ from .types import DecisionMetric, RankingStatistic, ExpectedMethod
 DIVISION_EPSILON = 1e-7
 
 
+def build_params(method_name: str, input_params: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    """Build a standardized params dict for AnalysisResult.
+
+    All methods produce the same structure:
+        {"method": "prr", "input_params": {...}, ...extra_keys}
+    """
+    result = {"method": method_name, "input_params": input_params}
+    result.update(extra)
+    return result
+
+
 def extract_contingency_data(
     container: DataContainer,
     min_events: int,
@@ -145,6 +156,7 @@ def build_freq_result(
     FDR: np.ndarray,
     ranking_statistic: RankingStatistic,
     num_signals: int,
+    params: dict[str, Any] | None = None,
 ) -> AnalysisResult:
     """Build the AnalysisResult for frequentist methods (PRR, ROR, RFET)."""
     all_signals = pd.DataFrame(
@@ -171,4 +183,5 @@ def build_freq_result(
         all_signals=all_signals,
         signals=all_signals.iloc[0:num_signals],
         num_signals=num_signals,
+        params=params,
     )

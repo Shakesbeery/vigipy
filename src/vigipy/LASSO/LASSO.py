@@ -9,6 +9,7 @@ import statsmodels.api as sm
 from sklearn.linear_model import Lasso, LassoLars, LassoLarsIC
 
 from ..utils.Container import AnalysisResult, DataContainer
+from ..utils.common import build_params
 
 
 def lasso(
@@ -161,5 +162,5 @@ def lasso(
         all_signals=all_signals,
         signals=signals,
         num_signals=len(signals),
-        params=input_params,
+        params=build_params("lasso", input_params),
     )

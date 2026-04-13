@@ -9,8 +9,8 @@ from scipy.optimize import minimize
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils import calculate_expected
-from ..utils.common import compute_bayesian_metrics, determine_num_signals
-from ..utils.types import DecisionMetric, RankingStatistic, ExpectedMethod
+from ..utils.common import compute_bayesian_metrics, determine_num_signals, build_params
+from ..utils.types import DecisionMetric, GPSRankingStatistic, ExpectedMethod
 from ..utils.distribution_funcs.quantile_funcs import quantiles as _quantiles_scalar
 
 quantiles = np.vectorize(_quantiles_scalar)
@@ -34,7 +34,7 @@ def gps(
     min_events: int = 1,
     decision_metric: DecisionMetric = "rank",
     decision_thres: float = 0.05,
-    ranking_statistic: RankingStatistic = "log2",
+    ranking_statistic: GPSRankingStatistic = "log2",
     truncate: bool = False,
     truncate_thres: float = 1,
     prior_init: dict[str, float] | None = None,
@@ -239,7 +239,7 @@ def gps(
     elif ranking_statistic == "quantile":
         RankStat = LB
     elif ranking_statistic == "log2":
-        RankStat = np.array([x.evalf() for x in EBlog2])
+        RankStat = np.asarray(EBlog2, dtype=np.float64)
 
     FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic)
     num_signals = determine_num_signals(
@@ -249,12 +249,10 @@ def gps(
     name = DATA["product_name"]
     ae = DATA["ae_name"]
     count = n11
-    params = {
-        "input_params": input_params,
-        "prior_init": prior_init,
-        "prior_param": priors,
-        "convergence": code_convergence,
-    }
+    params = build_params(
+        "gps", input_params,
+        prior_init=prior_init, prior_param=priors, convergence=code_convergence,
+    )
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":
