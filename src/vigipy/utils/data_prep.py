@@ -1,4 +1,4 @@
-﻿from itertools import product, chain, combinations
+from itertools import chain, combinations
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -134,7 +134,7 @@ def convert_binary(
     )
 
 
-def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="count", min_threshold=3):
+def convert_multi_item(df, product_label=None, ae_label="AE", count_label="count", min_threshold=3):
     """***WARNING*** Currently experimental and not guaranteed to perform as expected.
     Convert data with multiple product columns into a multi-item flattened dataframe for the DA methods.
 
@@ -148,6 +148,9 @@ def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="c
     Returns:
         Container: A container object that holds the necessary components for DA.
     """
+    if product_label is None:
+        product_label = ["name"]
+
     ae_counts = defaultdict(int)
     product_counts = defaultdict(int)
     for col in product_label:
@@ -199,24 +202,12 @@ def count(data, rows, cols):
         df: A Pandas DataFrame with the count information
 
     """
-    d = {
-        "events": [],
-        "product_aes": [],
-        "count_across_brands": [],
-        "ae_name": [],
-        "product_name": [],
-    }
-    for col, row in product(data.columns, data.index):
-        n11 = data[col][row]
-        if n11 > 0:
-            d["count_across_brands"].append(cols[col])
-            d["product_aes"].append(rows[row])
-            d["events"].append(n11)
-            d["product_name"].append(row)
-            d["ae_name"].append(col)
-
-    df = pd.DataFrame(d)
-    return df
+    unpivoted = data.unstack()
+    unpivoted = unpivoted[unpivoted > 0].reset_index()
+    unpivoted.columns = ["ae_name", "product_name", "events"]
+    unpivoted["product_aes"] = unpivoted["product_name"].map(rows)
+    unpivoted["count_across_brands"] = unpivoted["ae_name"].map(cols)
+    return unpivoted[["events", "product_aes", "count_across_brands", "ae_name", "product_name"]]
 
 def _sanitize_data(df, keep_labels):
     keep = []

@@ -26,10 +26,26 @@ class AnalysisResult:
         return self.params
 
     def export(self, name: str, index: bool = False) -> None:
-        """Export signals and all data to an Excel file."""
-        with pd.ExcelWriter(name) as writer:
-            self.signals.to_excel(writer, sheet_name="Signals", index=index)
-            self.all_signals.to_excel(writer, sheet_name="all_data", index=index)
+        """Export signals and all data to an Excel (.xlsx) or CSV (.csv) file.
+
+        Parameters:
+            name: Output filepath. If the path ends with '.csv', signals are exported
+                to CSV format. Otherwise, writes 'Signals' and 'all_data' sheets to Excel.
+            index: Whether to write row index labels to the output file.
+        """
+        if name.endswith(".csv"):
+            self.signals.to_csv(name, index=index)
+            return
+
+        try:
+            with pd.ExcelWriter(name) as writer:
+                self.signals.to_excel(writer, sheet_name="Signals", index=index)
+                self.all_signals.to_excel(writer, sheet_name="all_data", index=index)
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise ImportError(
+                "Exporting to Excel (.xlsx) requires 'openpyxl'. "
+                "Install it with 'pip install openpyxl' or 'pip install vigipy[excel]'."
+            ) from exc
 
     def __repr__(self) -> str:
         return (
@@ -59,18 +75,34 @@ class DataContainer:
     type: str = "contingency"
 
 
-# Backward-compatible factory: Container(params=True) -> AnalysisResult or DataContainer
 class Container:
-    """Legacy wrapper preserved for backward compatibility.
+    """Legacy container class preserved for backward compatibility.
 
-    New code should use AnalysisResult or DataContainer directly.
+    New applications should use AnalysisResult or DataContainer directly.
     """
 
     def __init__(self, params=False):
         if params:
             self.param = dict()
 
-    def export(self, name, index=False):
-        with pd.ExcelWriter(name) as writer:
-            self.signals.to_excel(writer, sheet_name="Signals", index=index)
-            self.all_signals.to_excel(writer, sheet_name="all_data", index=index)
+    def export(self, name: str, index: bool = False) -> None:
+        """Export signals and all data to an Excel (.xlsx) or CSV (.csv) file.
+
+        Parameters:
+            name: Output filepath. If the path ends with '.csv', signals are exported
+                to CSV format. Otherwise, writes 'Signals' and 'all_data' sheets to Excel.
+            index: Whether to write row index labels to the output file.
+        """
+        if name.endswith(".csv"):
+            self.signals.to_csv(name, index=index)
+            return
+
+        try:
+            with pd.ExcelWriter(name) as writer:
+                self.signals.to_excel(writer, sheet_name="Signals", index=index)
+                self.all_signals.to_excel(writer, sheet_name="all_data", index=index)
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise ImportError(
+                "Exporting to Excel (.xlsx) requires 'openpyxl'. "
+                "Install it with 'pip install openpyxl' or 'pip install vigipy[excel]'."
+            ) from exc

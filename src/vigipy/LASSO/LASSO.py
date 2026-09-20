@@ -90,6 +90,9 @@ def lasso(
     }
     X = container.product_features
     ys = container.event_outcomes
+    X_arr = np.ascontiguousarray(X.values, dtype=np.float64)
+    n_samples = len(X_arr)
+    rng = np.random.default_rng()
     res = defaultdict(list)
 
     if lasso_kwargs is None:
@@ -124,7 +127,7 @@ def lasso(
             ci_lower = np.zeros(len(all_coefs))
             ci_upper = np.zeros(len(all_coefs))
         else:
-            lasso.fit(X, y)
+            lasso.fit(X_arr, y)
             all_coefs = lasso.coef_.copy()
 
             # Initialize a list to store bootstrap coefficients
@@ -132,9 +135,9 @@ def lasso(
 
             # Bootstrap resampling
             for _ in range(num_bootstrap):
-                # Sample with replacement
-                bootstrap_sample_indices = np.random.choice(range(len(ys)), size=len(ys), replace=True)
-                X_bootstrap = X.iloc[bootstrap_sample_indices]
+                # Sample with replacement using fast array indexing
+                bootstrap_sample_indices = rng.choice(n_samples, size=n_samples, replace=True)
+                X_bootstrap = X_arr[bootstrap_sample_indices]
                 y_bootstrap = y[bootstrap_sample_indices]
 
                 # Fit LASSO model to bootstrap sample

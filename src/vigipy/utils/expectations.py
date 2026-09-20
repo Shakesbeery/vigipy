@@ -1,5 +1,6 @@
 import warnings
 
+import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
@@ -44,14 +45,16 @@ def __test_dispersion(model, data):
         upper_bound: the 95% confidence interval value
 
     """
-    data["mu"] = model.mu
-    data["response"] = data.apply(__cameron_trivedi_dispersion, axis=1)
-    results = smf.ols("response ~ mu - 1", data).fit()
+    y = np.asarray(data["events"], dtype=np.float64)
+    m = np.asarray(model.mu, dtype=np.float64)
+    response = ((y - m) ** 2 - y) / m
+    ols_data = pd.DataFrame({"response": response, "mu": m})
+    results = smf.ols("response ~ mu - 1", ols_data).fit()
 
     alpha_conf_int = results.conf_int(0.05).loc["mu"]
-    alpha = results.params[0]
-    lower_bound = alpha_conf_int.loc[0]
-    upper_bound = alpha_conf_int.loc[1]
+    alpha = float(results.params.iloc[0])
+    lower_bound = float(alpha_conf_int.iloc[0])
+    upper_bound = float(alpha_conf_int.iloc[1])
 
     return alpha, lower_bound, upper_bound
 

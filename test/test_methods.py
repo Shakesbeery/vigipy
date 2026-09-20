@@ -27,10 +27,28 @@ def assert_valid_result(result, expected_columns=None):
     assert isinstance(result.all_signals, pd.DataFrame)
     assert isinstance(result.signals, pd.DataFrame)
     assert result.num_signals >= 0
-    # signals must be a subset of all_signals by length
+    # signals length must match num_signals
+    assert len(result.signals) == result.num_signals, (
+        f"len(signals)={len(result.signals)} != num_signals={result.num_signals}"
+    )
     assert len(result.signals) <= len(result.all_signals)
     if expected_columns:
         assert set(expected_columns).issubset(result.all_signals.columns)
+    for col in (
+        "p_value", "PRR", "ROR", "RFET", "fdr", "quantile", "log2",
+        "Count", "Expected Count", "FNR", "Se", "Sp", "LASSO Coefficient",
+    ):
+        if col in result.all_signals.columns:
+            assert result.all_signals[col].notna().all(), f"Column {col} contains NaN values"
+    for col in ("Count", "Expected Count"):
+        if col in result.all_signals.columns:
+            assert (result.all_signals[col] >= 0).all(), f"Column {col} has negative values"
+    for col in ("fdr", "Se", "Sp"):
+        if col in result.all_signals.columns:
+            assert (
+                (result.all_signals[col] >= -1e-7).all()
+                and (result.all_signals[col] <= 1.0 + 1e-7).all()
+            ), f"Column {col} outside [0, 1]"
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +85,10 @@ class TestPRR:
         assert top["Count"] == 61.0
         np.testing.assert_allclose(top["PRR"], 5.200984, rtol=1e-4)
         np.testing.assert_allclose(top["Expected Count"], 15.153476, rtol=1e-4)
-        assert result.num_signals == 116
+        assert result.num_signals == 151
+        # Baseline comparison without continuity correction
+        result_uncorr = prr(converted_data, min_events=3, decision_metric="rank", continuity_correction=False)
+        assert result_uncorr.num_signals == 116
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +124,10 @@ class TestROR:
         assert top["Adverse Event"] == "Infection"
         assert top["Count"] == 61.0
         np.testing.assert_allclose(top["ROR"], 6.259909, rtol=1e-4)
-        assert result.num_signals == 116
+        assert result.num_signals == 151
+        # Baseline comparison without continuity correction
+        result_uncorr = ror(converted_data, min_events=3, decision_metric="rank", continuity_correction=False)
+        assert result_uncorr.num_signals == 116
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +154,15 @@ class TestRFET:
         assert_valid_result(result)
 
     def test_mid_pval(self, converted_data):
-        result = rfet(converted_data, min_events=3, mid_pval=True)
-        assert_valid_result(result)
+        result_std = rfet(converted_data, min_events=3, mid_pval=False)
+        result_mid = rfet(converted_data, min_events=3, mid_pval=True)
+        assert_valid_result(result_mid)
+        assert result_mid.all_signals["p_value"].notna().all()
+        # Mid-p values should be <= standard one-sided Fisher p-values
+        assert (
+            result_mid.all_signals["p_value"].values
+            <= result_std.all_signals["p_value"].values + 1e-10
+        ).all()
 
     def test_golden_values(self, converted_data):
         """Regression test: pin numeric output for RFET with default settings."""
@@ -140,7 +171,7 @@ class TestRFET:
         assert top["Product"] == "PELVISOFT"
         assert top["Adverse Event"] == "Dehydration"
         assert top["Count"] == 518.0
-        np.testing.assert_allclose(top["p_value"], 2.710960e-297, rtol=1e-3)
+        np.testing.assert_allclose(top["p_value"], 2.388804e-297, rtol=1e-3)
         assert result.num_signals == 143
 
 
@@ -185,7 +216,7 @@ class TestBCPNN:
         assert top["Product"] == "COLLAMEND"
         assert top["Adverse Event"] == "Plaque (lesion)"
         np.testing.assert_allclose(top["quantile"], 2.087242, rtol=1e-4)
-        assert result.num_signals == 65
+        assert result.num_signals == 66
 
     def test_golden_values_pvalue(self, converted_data):
         """Regression test: pin numeric output for BCPNN p_value ranking."""
@@ -197,7 +228,13 @@ class TestBCPNN:
         assert top["Product"] == "PELVISOFT"
         assert top["Adverse Event"] == "Dehydration"
         np.testing.assert_allclose(top["p_value"], 1.151430e-76, rtol=1e-3)
-        assert result.num_signals == 89
+        assert result.num_signals == 90
+        
+    def test_monte_carlo(self, converted_data):
+        result = bcpnn(converted_data, min_events=3, MC=True, num_MC=1000)
+        assert_valid_result(result)
+        assert result.all_signals["quantile"].notna().all()
+        assert len(result.signals) >= 0
 
 
 # ---------------------------------------------------------------------------
@@ -379,3 +416,113 @@ class TestAnalyze:
     def test_get_default_config_invalid(self):
         with pytest.raises(ValueError):
             get_default_config("invalid")
+
+
+# ---------------------------------------------------------------------------
+# FDR and LBE Tests
+# ---------------------------------------------------------------------------
+
+class TestFDRAndLBE:
+    def test_compute_fdr_alignment(self):
+        from vigipy.utils.common import compute_fdr
+
+        pvals = np.array([0.9, 0.001, 0.05, 0.4, 0.8])
+        fdr = compute_fdr(pvals, len(pvals))
+        assert len(fdr) == len(pvals)
+        assert not np.isnan(fdr).any()
+        # Smallest p-value should have smallest FDR
+        assert fdr[1] < fdr[0]
+        assert fdr[1] < fdr[2]
+        assert fdr[2] < fdr[3]
+
+    def test_lbe_vectorized(self):
+        from vigipy.utils.lbe import lbe
+
+        pvals = np.array([0.001, 0.02, 0.05, 0.1, 0.3, 0.7])
+        res = lbe(pvals)
+        assert res.qvalues is not None
+        assert not np.isnan(res.qvalues).any()
+        assert not np.isinf(res.qvalues).any()
+        # Check monotonicity of qvalues relative to sorted pvals
+        sort_idx = np.argsort(pvals)
+        sorted_q = res.qvalues[sort_idx]
+        assert np.all(np.diff(sorted_q) >= -1e-10)
+
+    def test_compute_fdr_monotonicity(self):
+        from vigipy.utils.common import compute_fdr
+
+        pvals = np.array([0.031, 0.01, 0.5, 0.03, 0.8, 0.001])
+        fdr = compute_fdr(pvals, len(pvals))
+        sort_idx = np.argsort(pvals)
+        sorted_fdr = fdr[sort_idx]
+        assert np.all(np.diff(sorted_fdr) >= -1e-10)
+
+    def test_compute_bayesian_metrics_monotonicity(self):
+        from vigipy.utils.common import compute_bayesian_metrics
+
+        post_prob = np.array([0.05, 0.001, 0.02, 0.01])
+        rank_stat = np.array([1.5, 1.2, 1.8, 1.0])
+        fdr, fnr, se, sp = compute_bayesian_metrics(post_prob, len(post_prob), "quantile", rank_stat)
+        sort_idx = np.argsort(-rank_stat)
+        sorted_fdr = fdr[sort_idx]
+        assert np.all(np.diff(sorted_fdr) >= -1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Robustness, Edge Cases, and Model Options
+# ---------------------------------------------------------------------------
+
+class TestRobustnessAndEdgeCases:
+    def test_gps_config_default_bounds(self, converted_data):
+        from vigipy import analyze, GPSConfig
+        cfg = GPSConfig(min_events=3)
+        assert cfg.minimization_bounds is not None
+        result = analyze(converted_data, config=cfg)
+        assert result.num_signals >= 0
+
+    def test_container_export_csv_and_excel(self, converted_data, tmp_path):
+        import os
+        from vigipy import prr
+        result = prr(converted_data, min_events=3)
+        csv_file = str(tmp_path / "signals.csv")
+        result.export(csv_file)
+        assert os.path.exists(csv_file)
+        df_csv = pd.read_csv(csv_file)
+        assert len(df_csv) == len(result.signals)
+
+    def test_longitudinal_no_mutation_and_custom_count(self):
+        dates = ["2020-01-15", "2020-06-15", "2021-01-15", "2021-06-15"]
+        df = pd.DataFrame({
+            "date": dates,
+            "drug": ["DrugA", "DrugB", "DrugA", "DrugB"],
+            "ae": ["Nausea", "Headache", "Nausea", "Headache"],
+            "my_events": [5, 10, 8, 12],
+        })
+        original_date_dtype = df["date"].dtype
+        model = LongitudinalModel(df, time_unit="A", count_col="my_events")
+        assert model.time_unit == "A"
+        assert df["date"].dtype == original_date_dtype
+        assert model.count_col == "my_events"
+
+    def test_lasso_vectorized_bootstrap(self, binary_data):
+        res = lasso(binary_data, num_bootstrap=5, min_events=3)
+        assert res.num_signals >= 0
+        assert not np.isnan(res.all_signals["LASSO Coefficient"]).any()
+        assert not np.isnan(res.all_signals["CI Lower"]).any()
+        assert not np.isnan(res.all_signals["CI Upper"]).any()
+
+    def test_zero_cell_continuity_correction(self):
+        from vigipy import convert, prr, ror, rfet
+        df = pd.DataFrame({
+            "name": ["DrugA", "DrugB", "DrugA", "DrugB"],
+            "AE": ["AE1", "AE1", "AE2", "AE2"],
+            "count": [0, 5, 10, 20],
+        })
+        cont = convert(df)
+        res_prr = prr(cont, min_events=0)
+        res_ror = ror(cont, min_events=0)
+        res_rfet = rfet(cont, min_events=0)
+        for res, name in [(res_prr, "PRR"), (res_ror, "ROR"), (res_rfet, "RFET")]:
+            assert not np.isinf(res.all_signals[name]).any()
+            assert not np.isnan(res.all_signals[name]).any()
+            assert not np.isnan(res.all_signals["p_value"]).any()

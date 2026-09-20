@@ -21,7 +21,29 @@ def bcpnn(
     expected_method: ExpectedMethod = "mantel-haentzel",
     method_alpha: float = 1,
 ) -> AnalysisResult:
-    """A Bayesian Confidence Propagation Neural Network."""
+    """Bayesian Confidence Propagation Neural Network (BCPNN) signal detection.
+
+    Estimates the Information Component (IC) measuring dependency between a product
+    and an adverse event. Supports both closed-form analytical approximations (via
+    digamma/polygamma functions) and numerical Dirichlet Monte Carlo sampling.
+
+    Parameters:
+        container: A DataContainer holding event counts and marginal totals.
+        relative_risk: Null hypothesis threshold for relative risk (default: 1.0).
+        min_events: Minimum observed count required for an event to be retained.
+        decision_metric: Decision rule for identifying signals ('rank', 'fdr', or 'signals').
+        decision_thres: Significance threshold applied to the decision metric.
+        ranking_statistic: Metric used to rank candidate signals ('quantile' for IC_025 or 'p_value').
+        MC: If True, uses Monte Carlo Dirichlet simulation instead of analytical formulas.
+        num_MC: Number of Monte Carlo draws per contingency table when MC=True.
+        expected_method: Method for calculating expected counts ('mantel-haentzel',
+            'poisson', or 'negative-binomial').
+        method_alpha: Dispersion parameter when using the negative binomial expected method.
+
+    Returns:
+        AnalysisResult containing detected signals, all evaluated pairs, signal count,
+        and model parameters.
+    """
     input_params = {
         "relative_risk": relative_risk,
         "min_events": min_events,
@@ -71,7 +93,8 @@ def bcpnn(
             ),
             dtype=np.float64,
         )
-        posterior_prob = norm.cdf(np.log(relative_risk), IC, np.sqrt(IC_variance))
+        rr_threshold = np.log2(relative_risk) if relative_risk > 0 else -np.inf
+        posterior_prob = norm.cdf(rr_threshold, IC, np.sqrt(IC_variance))
         lower_bound = norm.ppf(0.025, IC, np.sqrt(IC_variance))
     else:
         num_MC = float(num_MC)
@@ -95,25 +118,26 @@ def bcpnn(
 
         posterior_prob = []
         lower_bound = []
+        log2_scale = 1.0 / np.log(2)
+        rr_threshold = np.log2(relative_risk) if relative_risk > 0 else -np.inf
         for m in range(num_cell):
             alpha = [g11[m], g10[m], g01[m], g00[m]]
             p = np.random.dirichlet(alpha, int(num_MC))
             p11 = p[:, 0]
             p1_ = p11 + p[:, 1]
             p_1 = p11 + p[:, 2]
-            ic_monte = np.log(p11 / (p1_ * p_1))
-            temp = 1 * (ic_monte < np.log(relative_risk))
-            posterior_prob.append(sum(temp) / num_MC)
-            lower_bound.append(ic_monte[round(num_MC * 0.025)])
-        posterior_prob = np.asarray(posterior_prob)
-        lower_bound = np.asarray(lower_bound)
+            ic_monte = log2_scale * np.log(p11 / (p1_ * p_1))
+            posterior_prob.append(float(np.mean(ic_monte < rr_threshold)))
+            lower_bound.append(float(np.percentile(ic_monte, 2.5)))
+        posterior_prob = np.asarray(posterior_prob, dtype=np.float64)
+        lower_bound = np.asarray(lower_bound, dtype=np.float64)
 
     if ranking_statistic == "p_value":
         RankStat = posterior_prob
     else:
         RankStat = lower_bound
 
-    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_prob, num_cell, ranking_statistic)
+    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_prob, num_cell, ranking_statistic, RankStat)
     num_signals = determine_num_signals(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
     )
@@ -140,7 +164,6 @@ def bcpnn(
                 "Sp": Sp,
             }
         ).sort_values(by=[ranking_statistic])
-        signals = all_signals.loc[all_signals[ranking_statistic] <= decision_thres]
     else:
         all_signals = pd.DataFrame(
             {
@@ -158,12 +181,9 @@ def bcpnn(
                 "Sp": Sp,
             }
         ).sort_values(by=[ranking_statistic], ascending=False)
-        signals = all_signals.loc[all_signals[ranking_statistic] >= decision_thres]
 
-    if num_signals > 0:
-        num_signals -= 1
-    else:
-        num_signals = 0
+    all_signals.index = np.arange(len(all_signals.index))
+    signals = all_signals.iloc[0:num_signals]
 
     return AnalysisResult(
         all_signals=all_signals,

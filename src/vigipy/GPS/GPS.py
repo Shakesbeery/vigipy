@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import warnings
 import numpy as np
@@ -147,6 +147,8 @@ def gps(
         p_out = False
         if minimization_method not in BOUNDED_METHODS:
             minimization_bounds = None
+        elif minimization_bounds is None:
+            minimization_bounds = ((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1))
 
         if minimization_options is None:
             minimization_options = {}
@@ -241,7 +243,7 @@ def gps(
     elif ranking_statistic == "log2":
         RankStat = np.asarray(EBlog2, dtype=np.float64)
 
-    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic)
+    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic, RankStat)
     num_signals = determine_num_signals(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
     )
@@ -313,10 +315,6 @@ def gps(
 
     # List of Signals generated according to the method
     all_signals.index = np.arange(0, len(all_signals.index))
-    if num_signals > 0:
-        num_signals -= 1
-    else:
-        num_signals = 0
 
     return AnalysisResult(
         all_signals=all_signals,
