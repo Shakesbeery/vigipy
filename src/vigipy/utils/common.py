@@ -145,7 +145,10 @@ def determine_num_signals(
     if decision_metric == "fdr":
         return int((FDR <= decision_thres).sum())
     elif decision_metric == "signals":
-        return int(min((RankStat <= decision_thres).sum(), num_cell))
+        if decision_thres >= 1:
+            return int(min(int(decision_thres), num_cell))
+        else:
+            return int(min(max(0, int(round(decision_thres * num_cell))), num_cell))
     elif decision_metric == "rank":
         if ranking_statistic == "p_value":
             return int((RankStat <= decision_thres).sum())
