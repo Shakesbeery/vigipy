@@ -1,20 +1,19 @@
-﻿import pandas as pd
-import numpy as np
+from __future__ import annotations
+
 import warnings
-from scipy.special import gdtr
+import numpy as np
+import pandas as pd
+from scipy.special import digamma, gdtr
 from scipy.stats import nbinom
 from scipy.optimize import minimize
-from sympy.functions.special import gamma_functions
 
-from ..utils import Container
+from ..utils.Container import AnalysisResult, DataContainer
 from ..utils import calculate_expected
-from ..utils.distribution_funcs.negative_binomials import dnbinom, pnbinom
-from ..utils.distribution_funcs.quantile_funcs import quantiles
+from ..utils.common import compute_bayesian_metrics, determine_num_signals, build_params
+from ..utils.types import DecisionMetric, GPSRankingStatistic, ExpectedMethod
+from ..utils.distribution_funcs.quantile_funcs import quantiles as _quantiles_scalar
 
-dnbinom = np.vectorize(dnbinom)
-pnbinom = np.vectorize(pnbinom)
-digamma = np.vectorize(gamma_functions.digamma)
-quantiles = np.vectorize(quantiles)
+quantiles = np.vectorize(_quantiles_scalar)
 
 EPS = np.finfo(np.float32).eps
 BOUNDED_METHODS = {
@@ -30,28 +29,22 @@ BOUNDED_METHODS = {
 
 
 def gps(
-    container,
-    relative_risk=1,
-    min_events=1,
-    decision_metric="rank",
-    decision_thres=0.05,
-    ranking_statistic="log2",
-    truncate=False,
-    truncate_thres=1,
-    prior_init={
-        "alpha1": 0.2041,
-        "beta1": 0.05816,
-        "alpha2": 1.415,
-        "beta2": 1.838,
-        "w": 0.0969,
-    },
-    prior_param=None,
-    expected_method="mantel-haentzel",
-    method_alpha=1,
-    minimization_method="CG",
-    minimization_bounds=((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1)),
-    minimization_options=None,
-):
+    container: DataContainer,
+    relative_risk: float = 1,
+    min_events: int = 1,
+    decision_metric: DecisionMetric = "rank",
+    decision_thres: float = 0.05,
+    ranking_statistic: GPSRankingStatistic = "log2",
+    truncate: bool = False,
+    truncate_thres: float = 1,
+    prior_init: dict[str, float] | None = None,
+    prior_param: list[float] | None = None,
+    expected_method: ExpectedMethod = "mantel-haentzel",
+    method_alpha: float = 1,
+    minimization_method: str = "Nelder-Mead",
+    minimization_bounds: tuple[tuple[float, float], ...] = ((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1)),
+    minimization_options: dict | None = None,
+) -> AnalysisResult:
     """
     Computes signal detection based on Multi-item enabled Gamma Poisson Shrinkage (GPS) using prior distributions
     for adverse event and product feature data.
@@ -84,7 +77,7 @@ def gps(
         The method used to calculate the expected event counts. Options include "mantel-haentzel", "negative-binomial" and "poisson".
     method_alpha : float, optional (default=1)
         Dispersion parameter used in the expected value calculation method.
-    minimization_method : str, optional (default="CG")
+    minimization_method : str, optional (default="Nelder-Mead")
         The optimization method used for estimating prior parameters if `prior_param` is None.
     minimization_bounds : tuple, optional
         Bounds on the prior parameter values for the optimization process.
@@ -109,8 +102,27 @@ def gps(
     - The optimization process is used to estimate the prior parameters unless provided manually.
     - The function can handle truncation for numerical stability when dealing with sparse data.
     """
-    input_params = locals()
-    del input_params["container"]
+    if prior_init is None:
+        prior_init = {
+            "alpha1": 0.2041,
+            "beta1": 0.05816,
+            "alpha2": 1.415,
+            "beta2": 1.838,
+            "w": 0.0969,
+        }
+
+    input_params = {
+        "relative_risk": relative_risk,
+        "min_events": min_events,
+        "decision_metric": decision_metric,
+        "decision_thres": decision_thres,
+        "ranking_statistic": ranking_statistic,
+        "truncate": truncate,
+        "truncate_thres": truncate_thres,
+        "expected_method": expected_method,
+        "method_alpha": method_alpha,
+        "minimization_method": minimization_method,
+    }
 
     priors = np.asarray(
         [
@@ -129,11 +141,14 @@ def gps(
     ni1 = np.asarray(DATA["count_across_brands"], dtype=np.float64)
     expected = calculate_expected(N, n1j, ni1, n11, expected_method, method_alpha)
     p_out = True
+    code_convergence = "User-provided priors"
 
     if prior_param is None:
         p_out = False
         if minimization_method not in BOUNDED_METHODS:
             minimization_bounds = None
+        elif minimization_bounds is None:
+            minimization_bounds = ((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1))
 
         if minimization_options is None:
             minimization_options = {}
@@ -226,50 +241,24 @@ def gps(
     elif ranking_statistic == "quantile":
         RankStat = LB
     elif ranking_statistic == "log2":
-        RankStat = np.array([x.evalf() for x in EBlog2])
+        RankStat = np.asarray(EBlog2, dtype=np.float64)
 
-    post_cumsum = np.cumsum(posterior_probability)
-    post_1_cumsum = np.cumsum(1 - posterior_probability)
-    post_1_sum = sum(1 - posterior_probability)
-    post_range = np.arange(1, len(posterior_probability) + 1)
-
-    if ranking_statistic == "p_value":
-        FDR = post_cumsum / np.array(post_range)
-        FNR = np.array(post_1_cumsum) / ((num_cell - post_range) + 1e-7)
-        Se = np.cumsum((1 - posterior_probability)) / post_1_sum
-        Sp = np.array(post_cumsum) / (num_cell - post_1_sum)
-    else:
-        FDR = post_cumsum / post_range
-        FNR = np.array(list(reversed(post_1_cumsum))) / ((num_cell - post_range) + 1e-7)
-        Se = np.cumsum((1 - posterior_probability)) / post_1_sum
-        Sp = np.array(list(reversed(post_cumsum))) / (num_cell - post_1_sum)
-
-    # Number of signals according to the decision rule (pp/FDR/Nb of Signals)
-    if decision_metric == "fdr":
-        num_signals = np.sum(FDR <= decision_thres)
-    elif decision_metric == "signals":
-        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
-    elif decision_metric == "rank":
-        if ranking_statistic == "p_value":
-            num_signals = np.sum(RankStat <= decision_thres)
-        elif ranking_statistic == "quantile":
-            num_signals = np.sum(RankStat >= decision_thres)
-        elif ranking_statistic == "log2":
-            num_signals = np.sum(RankStat >= decision_thres)
+    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic, RankStat)
+    num_signals = determine_num_signals(
+        FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
+    )
 
     name = DATA["product_name"]
     ae = DATA["ae_name"]
     count = n11
-    RES = Container(params=True)
-    # list of the parameters used
-    RES.param["input_params"] = input_params
-    RES.param["prior_init"] = prior_init
-    RES.param["prior_param"] = priors
-    RES.param["convergence"] = code_convergence
+    params = build_params(
+        "gps", input_params,
+        prior_init=prior_init, prior_param=priors, convergence=code_convergence,
+    )
 
     # SIGNALS RESULTS and presentation
     if ranking_statistic == "p_value":
-        RES.all_signals = pd.DataFrame(
+        all_signals = pd.DataFrame(
             {
                 "Product": name,
                 "Adverse Event": ae,
@@ -287,7 +276,7 @@ def gps(
         ).sort_values(by=[ranking_statistic])
 
     elif ranking_statistic == "quantile":
-        RES.all_signals = pd.DataFrame(
+        all_signals = pd.DataFrame(
             {
                 "Product": name,
                 "Adverse Event": ae,
@@ -303,10 +292,9 @@ def gps(
                 "Sp": Sp,
                 "posterior_probability": posterior_probability,
             }
-        )
-        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
+        ).sort_values(by=[ranking_statistic], ascending=False)
     else:
-        RES.all_signals = pd.DataFrame(
+        all_signals = pd.DataFrame(
             {
                 "Product": name,
                 "Adverse Event": ae,
@@ -323,23 +311,17 @@ def gps(
                 "LowerBound": LB,
                 "p_value": posterior_probability,
             }
-        )
-        RES.all_signals = RES.all_signals.sort_values(by=[ranking_statistic], ascending=False)
+        ).sort_values(by=[ranking_statistic], ascending=False)
 
     # List of Signals generated according to the method
-    RES.all_signals.index = np.arange(0, len(RES.all_signals.index))
-    if num_signals > 0:
-        num_signals -= 1
-    else:
-        num_signals = 0
-    RES.signals = RES.all_signals.iloc[
-        0:num_signals,
-    ]
+    all_signals.index = np.arange(0, len(all_signals.index))
 
-    # Number of signals
-    RES.num_signals = num_signals
-
-    return RES
+    return AnalysisResult(
+        all_signals=all_signals,
+        signals=all_signals.iloc[0:num_signals],
+        num_signals=num_signals,
+        params=params,
+    )
 
 
 def non_truncated_likelihood(p, n11, E):

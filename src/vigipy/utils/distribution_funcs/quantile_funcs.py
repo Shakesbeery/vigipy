@@ -1,4 +1,4 @@
-﻿import numpy as np
+import numpy as np
 from scipy.special import gdtr
 
 
@@ -9,13 +9,11 @@ def quantiles(threshold, Q, a1, b1, a2, b2):
     "Bayesian Data Mining in Large Frequency Tables..." (1999)
 
     """
-    if type(Q) is np.float64 or type(Q) is float:
-        length = 1
-    else:
-        length = len(Q)
-    m = np.repeat(-100000, length)
-    M = np.repeat(100000, length)
-    x = np.repeat(1, length)
+    is_scalar = np.ndim(Q) == 0
+    length = 1 if is_scalar else len(Q)
+    m = np.repeat(-100000.0, length)
+    M = np.repeat(100000.0, length)
+    x = np.repeat(1.0, length)
     cost = f_cost_quantiles(x, threshold, Q, a1, b1, a2, b2)
     while np.max(np.round(cost * 1e4)) != 0:
         S = np.sign(cost)
@@ -24,6 +22,8 @@ def quantiles(threshold, Q, a1, b1, a2, b2):
         m = (1 + S) / 2 * m + (1 - S) / 2 * x
         x = xnew
         cost = f_cost_quantiles(x, threshold, Q, a1, b1, a2, b2)
+    if is_scalar:
+        return float(x[0])
     return x
 
 

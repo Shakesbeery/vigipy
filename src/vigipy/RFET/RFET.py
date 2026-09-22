@@ -1,125 +1,87 @@
 import warnings
+
 import numpy as np
-import pandas as pd
-from ..utils.lbe import lbe
-from scipy.stats import fisher_exact, hypergeom
-from ..utils import Container
-from ..utils import calculate_expected
+from scipy.stats import hypergeom
+
+from ..utils.Container import AnalysisResult, DataContainer
+from ..utils.types import DecisionMetric, ExpectedMethod
+from ..utils.common import (
+    extract_contingency_data,
+    compute_fdr,
+    determine_num_signals,
+    build_freq_result,
+    build_params,
+)
 
 
 def rfet(
-    container,
-    relative_risk=1,
-    min_events=1,
-    decision_metric="fdr",
-    decision_thres=0.05,
-    mid_pval=False,
-    expected_method="mantel-haentzel",
-    method_alpha=1,
-):
+    container: DataContainer,
+    relative_risk: float = 1,
+    min_events: int = 1,
+    decision_metric: DecisionMetric = "fdr",
+    decision_thres: float = 0.05,
+    mid_pval: bool = False,
+    expected_method: ExpectedMethod = "mantel-haentzel",
+    method_alpha: float = 1,
+    fdr_threshold: float = 0.05,
+) -> AnalysisResult:
+    """Calculate the Reporting Fisher's Exact Test (RFET) for pharmacovigilance signal detection.
+
+    Computes exact hypergeometric p-values for 2x2 contingency tables using SciPy's
+    hypergeometric survival function, optionally applying Lancaster's mid-p correction.
+
+    Parameters:
+        container: A DataContainer holding event counts and marginal totals.
+        relative_risk: Deprecated parameter retained for signature compatibility.
+        min_events: Minimum observed count required for an event to be retained.
+        decision_metric: Decision rule for identifying signals ('fdr', 'rank', or 'signals').
+        decision_thres: Significance threshold applied to the decision metric.
+        mid_pval: Whether to apply Lancaster mid-p adjustment (subtracts 0.5 * P(X = n11)).
+        expected_method: Method for calculating expected counts ('mantel-haentzel',
+            'poisson', or 'negative-binomial').
+        method_alpha: Dispersion parameter when using the negative binomial expected method.
+        fdr_threshold: Target FDR level for local Bayes estimation.
+
+    Returns:
+        AnalysisResult containing detected signals, all evaluated pairs, signal count,
+        and model parameters.
     """
-    Calculate the proportional reporting ratio.
-
-    Arguments:
-        container: A DataContainer object produced by the convert()
-                    function from data_prep.py
-
-        relative_risk (int/float): The relative risk value
-
-        min_events: The min number of AE reports to be considered a signal
-
-        decision_metric (str): The metric used for detecting signals:
-                            {fdr = false detection rate,
-                            signals = number of signals,
-                            rank = ranking statistic}
-
-        decision_thres (float): The min thres value for the decision_metric
-
-        expected_method: The method of calculating the expected counts for
-                        the disproportionality analysis.
-
-        method_alpha: If the expected_method is negative-binomial, this
-                    parameter is the alpha parameter of the distribution.
-
-    """
-    DATA = container.data
-    N = container.N
-
-    if min_events > 1:
-        DATA = DATA[DATA.events >= min_events]
-
-    n11 = np.asarray(DATA["events"], dtype=np.float64)
-    n1j = np.asarray(DATA["product_aes"], dtype=np.float64)
-    ni1 = np.asarray(DATA["count_across_brands"], dtype=np.float64)
-    num_cell = len(n11)
-    expected = calculate_expected(N, n1j, ni1, n11, expected_method, method_alpha)
-
-    n10 = n1j - n11
-    n01 = ni1 - n11 + 1e-7
-    n00 = N - (n11 + n10 + n01)
+    if relative_risk != 1:
+        warnings.warn(
+            "relative_risk is unused in rfet() and will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    d = extract_contingency_data(container, min_events, expected_method, method_alpha)
+    n11, n10, n01, n00 = d["n11"], d["n10"], d["n01"], d["n00"]
+    n11_raw = d.get("n11_raw", n11)
 
     log_rfet = np.log(n11 * n00 / (n10 * n01))
-    pval_fish_uni = np.empty((num_cell))
-    for p in range(num_cell):
-        table = [[n11[p], n10[p]], [n01[p], n00[p]]]
-        pval_fish_uni[p] = fisher_exact(table, alternative="greater")[1]
+
+    # One-sided Fisher's exact test: P(X >= n11)
+    pval_fish_uni = hypergeom.sf(n11_raw - 1, d["N"], d["n1j"], d["ni1"])
 
     if mid_pval:
-        for p in range(num_cell):
-            pval_fish_uni[p] = pval_fish_uni[p] - 0.5 * hypergeom.pmf(
-                n11[p], n11[p] + n10[p], n11[p] + n01[p], n10[p] + n00[p]
-            )
+        # Lancaster mid-p correction
+        pval_fish_uni -= 0.5 * hypergeom.pmf(n11_raw, d["N"], d["n1j"], d["ni1"])
 
-    pval_uni = pval_fish_uni
-    pval_uni[pval_uni > 1] = 1
-    pval_uni[pval_uni < 0] = 0
+    pval_uni = np.clip(pval_fish_uni, 0, 1)
     RankStat = pval_uni
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        results = lbe(2 * np.minimum(pval_uni, 1 - pval_uni))
-    pi_c = results[1]
-    fdr = pi_c * np.sort(pval_uni[pval_uni <= 0.5]) / (np.arange(1, (pval_uni <= 0.5).sum() + 1) / num_cell)
-
-    fdr = np.concatenate(
-        (
-            fdr,
-            (
-                pi_c / (2 * np.arange(((pval_uni <= 0.5).sum()), num_cell) / num_cell)
-                + 1
-                - (pval_uni <= 0.5).sum() / np.arange((pval_uni <= 0.5).sum(), num_cell)
-            ),
-        ),
-        axis=None,
+    FDR = compute_fdr(pval_uni, d["num_cell"], fdr_threshold)
+    num_signals = determine_num_signals(
+        FDR, RankStat, decision_metric, decision_thres, "p_value", d["num_cell"]
     )
 
-    FDR = np.minimum(fdr, np.ones((len(fdr),)))
+    params = build_params("rfet", {
+        "min_events": min_events, "decision_metric": decision_metric,
+        "decision_thres": decision_thres, "mid_pval": mid_pval,
+        "expected_method": expected_method, "method_alpha": method_alpha,
+        "fdr_threshold": fdr_threshold,
+    })
 
-    if decision_metric == "fdr":
-        num_signals = (FDR <= decision_thres).sum()
-    elif decision_metric == "signals":
-        num_signals = min((RankStat <= decision_thres).sum(), num_cell)
-    elif decision_metric == "rank":
-        num_signals = (RankStat <= decision_thres).sum()
-
-    RC = Container()
-    RC.all_signals = pd.DataFrame(
-        {
-            "Product": DATA["product_name"].values,
-            "Adverse Event": DATA["ae_name"].values,
-            "Count": n11,
-            "Expected Count": expected,
-            "p_value": RankStat,
-            "PRR": np.exp(log_rfet),
-            "product margin": n1j,
-            "event margin": ni1,
-            "fdr": FDR,
-        },
-        index=np.arange(len(n11)),
-    ).sort_values(by=["p_value"])
-
-    RC.signals = RC.all_signals.iloc[
-        0:num_signals,
-    ]
-    RC.num_signals = num_signals
-    return RC
+    return build_freq_result(
+        d["DATA"], n11_raw, d["expected"], RankStat,
+        np.exp(log_rfet), "RFET",
+        d["n1j"], d["ni1"], FDR, "p_value", num_signals, params,
+    )

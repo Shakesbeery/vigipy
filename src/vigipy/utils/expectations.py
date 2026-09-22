@@ -1,5 +1,6 @@
 import warnings
 
+import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
@@ -44,14 +45,16 @@ def __test_dispersion(model, data):
         upper_bound: the 95% confidence interval value
 
     """
-    data["mu"] = model.mu
-    data["response"] = data.apply(__cameron_trivedi_dispersion, axis=1)
-    results = smf.ols("response ~ mu - 1", data).fit()
+    y = np.asarray(data["events"], dtype=np.float64)
+    m = np.asarray(model.mu, dtype=np.float64)
+    response = ((y - m) ** 2 - y) / m
+    ols_data = pd.DataFrame({"response": response, "mu": m})
+    results = smf.ols("response ~ mu - 1", ols_data).fit()
 
     alpha_conf_int = results.conf_int(0.05).loc["mu"]
-    alpha = results.params[0]
-    lower_bound = alpha_conf_int.loc[0]
-    upper_bound = alpha_conf_int.loc[1]
+    alpha = float(results.params.iloc[0])
+    lower_bound = float(alpha_conf_int.iloc[0])
+    upper_bound = float(alpha_conf_int.iloc[1])
 
     return alpha, lower_bound, upper_bound
 
@@ -140,11 +143,9 @@ def calculate_expected(N, n1j, ni1, n11, method="mantel-haentzel", alpha=1):
         The expected counts for n11
 
     """
-    try:
-        assert method in ("mantel-haentzel", "negative-binomial", "poisson")
-    except AssertionError:
-        err_msg = "{0} not a supported method. Please choose from {1}"
-        raise AssertionError(err_msg.format(method, ("mantel-haentzel", "negative-binomial", "poisson")))
+    supported = ("mantel-haentzel", "negative-binomial", "poisson")
+    if method not in supported:
+        raise ValueError(f"{method!r} is not a supported method. Choose from {supported}")
 
     if method == "mantel-haentzel":
         return __mh(N, n1j, ni1)
@@ -152,11 +153,11 @@ def calculate_expected(N, n1j, ni1, n11, method="mantel-haentzel", alpha=1):
         try:
             return __stats_method(n1j, ni1, n11, sm.families.NegativeBinomial(alpha=alpha))
         except PerfectSeparationError:
-            print("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
+            warnings.warn("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
             return __mh(N, n1j, ni1)
     elif method == "poisson":
         try:
             return __stats_method(n1j, ni1, n11, sm.families.Poisson())
         except PerfectSeparationError:
-            print("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
+            warnings.warn("Perfect separation of data detected. Defaulting to Mantel-Haentzel estimation.")
             return __mh(N, n1j, ni1)

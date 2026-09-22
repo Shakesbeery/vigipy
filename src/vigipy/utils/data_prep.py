@@ -1,10 +1,10 @@
-﻿from itertools import product, chain, combinations
+from itertools import chain, combinations
 from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
 
-from .Container import Container
+from .Container import DataContainer
 
 
 def convert(
@@ -45,12 +45,12 @@ def convert(
     data_df = count(data_cont, row_sums, col_sums)
 
     # Initialize the container object and assign the data
-    DC = Container()
-    DC.contingency = data_cont
-    DC.data = data_df
-    DC.N = data_df["events"].sum()
-    DC.type = "contingency"
-    return DC
+    return DataContainer(
+        data=data_df,
+        N=data_df["events"].sum(),
+        contingency=data_cont,
+        type="contingency",
+    )
 
 
 def compute_contingency(data_frame, product_label, count_label, ae_label, margin_threshold):
@@ -105,8 +105,6 @@ def convert_binary(
         y data with adverse events. Index locations are associated with the input DataFrame.
 
     """
-    DC = Container()
-
     # Sanitize df to remove unnecessary information during transforms
     data = _sanitize_data(data, [product_label, ae_label, count_label])
 
@@ -117,38 +115,42 @@ def convert_binary(
             group_list = [product_label, ae_label]
         data = data.groupby(group_list).sum().reset_index()
         event_df = __transform_dataframe(data, count_label, ae_label)
-        DC.type = "binary_count"
+        dc_type = "binary_count"
     else:
         if data[count_label].max() > 1 and expand_counts:
             data = __expand_dataframe(data, count_label, ae_label, product_label)
         event_df = pd.get_dummies(data[ae_label], prefix="", prefix_sep="")
-        event_df = event_df.groupby(by=event_df.columns, axis=1).sum()
-        DC.type = "binary"
+        event_df = event_df.T.groupby(level=0).sum().T
+        dc_type = "binary"
 
     prod_df = pd.get_dummies(data[product_label], prefix="", prefix_sep="")
-    DC.product_features = prod_df.groupby(by=prod_df.columns, axis=1).sum()
 
-    DC.event_outcomes = event_df
-    DC.N = data.shape[0]
-    DC.data = data
+    return DataContainer(
+        data=data,
+        N=data.shape[0],
+        product_features=prod_df.T.groupby(level=0).sum().T,
+        event_outcomes=event_df,
+        type=dc_type,
+    )
 
-    return DC
 
-
-def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="count", min_threshold=3):
+def convert_multi_item(df, product_label=None, ae_label="AE", count_label="count", min_threshold=3):
     """***WARNING*** Currently experimental and not guaranteed to perform as expected.
     Convert data with multiple product columns into a multi-item flattened dataframe for the DA methods.
 
     Args:
         df (pd.DataFrame): A dataframe where each row is a unique adverse event and has multiple columns
         indicating the presence of multiple devices/drugs/interventions.
-        product_cols (list, optional): A list of column names associated with the co-occuring products. Defaults to ["name"].
-        ae_col (str, optional): The column name that contains the adverse events. Defaults to "AE".
+        product_label (list, optional): A list of column names associated with the co-occuring products. Defaults to ["name"].
+        ae_label (str, optional): The column name that contains the adverse events. Defaults to "AE".
         min_threshold (int, optional): The minimum number of events required to keep a drug/device-event pair.
 
     Returns:
         Container: A container object that holds the necessary components for DA.
     """
+    if product_label is None:
+        product_label = ["name"]
+
     ae_counts = defaultdict(int)
     product_counts = defaultdict(int)
     for col in product_label:
@@ -180,14 +182,13 @@ def convert_multi_item(df, product_label=["name"], ae_label="AE", count_label="c
     new_df = pd.DataFrame(result)
     event_series = new_df.groupby(by=["AE", "product_name"]).sum()["count"]
     new_df["events"] = new_df.apply(lambda x: event_series[x["AE"]][x["product_name"]], axis=1)
-    new_df.rename(columns={ae_col: "ae_name"}, inplace=True)
+    new_df.rename(columns={ae_label: "ae_name"}, inplace=True)
 
-    DC = Container()
-    DC.contingency = compute_contingency(new_df, "product_name", "count", "ae_name", min_threshold)
-    DC.data = new_df[["ae_name", "product_name", "count_across_brands", "product_aes", "events"]].drop_duplicates()
-    DC.N = new_df["events"].sum()
-
-    return DC
+    return DataContainer(
+        data=new_df[["ae_name", "product_name", "count_across_brands", "product_aes", "events"]].drop_duplicates(),
+        N=new_df["events"].sum(),
+        contingency=compute_contingency(new_df, "product_name", "count", "ae_name", min_threshold),
+    )
 
 
 def count(data, rows, cols):
@@ -201,24 +202,12 @@ def count(data, rows, cols):
         df: A Pandas DataFrame with the count information
 
     """
-    d = {
-        "events": [],
-        "product_aes": [],
-        "count_across_brands": [],
-        "ae_name": [],
-        "product_name": [],
-    }
-    for col, row in product(data.columns, data.index):
-        n11 = data[col][row]
-        if n11 > 0:
-            d["count_across_brands"].append(cols[col])
-            d["product_aes"].append(rows[row])
-            d["events"].append(n11)
-            d["product_name"].append(row)
-            d["ae_name"].append(col)
-
-    df = pd.DataFrame(d)
-    return df
+    unpivoted = data.unstack()
+    unpivoted = unpivoted[unpivoted > 0].reset_index()
+    unpivoted.columns = ["ae_name", "product_name", "events"]
+    unpivoted["product_aes"] = unpivoted["product_name"].map(rows)
+    unpivoted["count_across_brands"] = unpivoted["ae_name"].map(cols)
+    return unpivoted[["events", "product_aes", "count_across_brands", "ae_name", "product_name"]]
 
 def _sanitize_data(df, keep_labels):
     keep = []
