@@ -162,15 +162,20 @@ def compute_bayesian_metrics(
     num_cell: int,
     ranking_statistic: RankingStatistic = "p_value",
     rank_stat: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Compute FDR, FNR, sensitivity, and specificity from posterior probabilities.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Compute FDR, FNR (miss rate), FOR (false omission rate), sensitivity (Se), and specificity (Sp).
 
     Used by Bayesian methods (BCPNN, GPS).
-    Calculates cumulative metrics along the ranked sequence of candidate signals.
+    Calculates cumulative decision-theoretic metrics along the ranked sequence of candidate signals:
+    - FDR: proportion of false positives among raised alerts (FP / (FP + TP))
+    - FNR: classic false negative rate / miss rate among all true signals (FN / (TP + FN) = 1 - Se)
+    - FOR: false omission rate among unselected non-alerts (FN / (FN + TN))
+    - Se: sensitivity / recall (TP / (TP + FN))
+    - Sp: specificity / true negative rate (TN / (TN + FP))
     """
     if num_cell == 0 or len(posterior_probability) == 0:
         empty = np.empty(0, dtype=np.float64)
-        return empty, empty, empty, empty
+        return empty, empty, empty, empty, empty
 
     if rank_stat is not None:
         if ranking_statistic == "p_value":
@@ -187,7 +192,7 @@ def compute_bayesian_metrics(
     fdr_raw = np.cumsum(p_sorted) / ranks
     fdr_sorted = np.maximum.accumulate(fdr_raw)
 
-    # Cumulative sensitivity
+    # Cumulative sensitivity (Se = TP / Total Signal)
     signal_mass = 1.0 - p_sorted
     total_signal = signal_mass.sum()
     if total_signal > 0:
@@ -195,12 +200,15 @@ def compute_bayesian_metrics(
     else:
         se_sorted = np.zeros(num_cell, dtype=np.float64)
 
-    # False negative rate among unselected hypotheses
+    # Classic False Negative Rate (FNR = Missed True Signals / Total True Signals = 1 - Se)
+    fnr_sorted = 1.0 - se_sorted
+
+    # False Omission Rate (FOR = Missed True Signals / Remaining Unselected Cells)
     unselected_signal = total_signal - np.cumsum(signal_mass)
     remaining_cells = num_cell - ranks
-    fnr_sorted = unselected_signal / (remaining_cells + DIVISION_EPSILON)
+    for_sorted = unselected_signal / (remaining_cells + DIVISION_EPSILON)
 
-    # Specificity
+    # Specificity (Sp = Unselected Null / Total Null = TN / Total Negative)
     total_null = p_sorted.sum()
     unselected_null = total_null - np.cumsum(p_sorted)
     if total_null > 0:
@@ -211,15 +219,23 @@ def compute_bayesian_metrics(
     # Restore original row order
     FDR = np.empty_like(fdr_sorted)
     FNR = np.empty_like(fnr_sorted)
+    FOR = np.empty_like(for_sorted)
     Se = np.empty_like(se_sorted)
     Sp = np.empty_like(sp_sorted)
 
     FDR[sort_order] = fdr_sorted
     FNR[sort_order] = fnr_sorted
+    FOR[sort_order] = for_sorted
     Se[sort_order] = se_sorted
     Sp[sort_order] = sp_sorted
 
-    return np.clip(FDR, 0, 1), np.clip(FNR, 0, 1), np.clip(Se, 0, 1), np.clip(Sp, 0, 1)
+    return (
+        np.clip(FDR, 0, 1),
+        np.clip(FNR, 0, 1),
+        np.clip(FOR, 0, 1),
+        np.clip(Se, 0, 1),
+        np.clip(Sp, 0, 1),
+    )
 
 
 def build_freq_result(

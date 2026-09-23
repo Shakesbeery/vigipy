@@ -137,7 +137,7 @@ def bcpnn(
     else:
         RankStat = lower_bound
 
-    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_prob, num_cell, ranking_statistic, RankStat)
+    FDR, FNR, FOR, Se, Sp = compute_bayesian_metrics(posterior_prob, num_cell, ranking_statistic, RankStat)
     num_signals = determine_num_signals(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
     )
@@ -161,6 +161,7 @@ def bcpnn(
                 "event margin": ni1,
                 "fdr": FDR,
                 "FNR": FNR,
+                "FOR": FOR,
                 "Se": Se,
                 "Sp": Sp,
             }
@@ -179,6 +180,7 @@ def bcpnn(
                 "event margin": ni1,
                 "fdr": FDR,
                 "FNR": FNR,
+                "FOR": FOR,
                 "Se": Se,
                 "Sp": Sp,
             }

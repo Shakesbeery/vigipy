@@ -36,14 +36,14 @@ def assert_valid_result(result, expected_columns=None):
         assert set(expected_columns).issubset(result.all_signals.columns)
     for col in (
         "p_value", "PRR", "ROR", "RFET", "fdr", "quantile", "log2",
-        "Count", "Expected Count", "FNR", "Se", "Sp", "LASSO Coefficient",
+        "Count", "Expected Count", "FNR", "FOR", "Se", "Sp", "LASSO Coefficient",
     ):
         if col in result.all_signals.columns:
             assert result.all_signals[col].notna().all(), f"Column {col} contains NaN values"
     for col in ("Count", "Expected Count"):
         if col in result.all_signals.columns:
             assert (result.all_signals[col] >= 0).all(), f"Column {col} has negative values"
-    for col in ("fdr", "Se", "Sp"):
+    for col in ("fdr", "FNR", "FOR", "Se", "Sp"):
         if col in result.all_signals.columns:
             assert (
                 (result.all_signals[col] >= -1e-7).all()
@@ -188,7 +188,7 @@ class TestBCPNN:
         assert_valid_result(result, [
             "Product", "Adverse Event", "Count", "Expected Count",
             "quantile", "count/expected", "product margin", "event margin",
-            "fdr", "FNR", "Se", "Sp",
+            "fdr", "FNR", "FOR", "Se", "Sp",
         ])
         # BCPNN should store params
         assert hasattr(result, "param")
@@ -251,7 +251,7 @@ class TestGPS:
         assert_valid_result(result, [
             "Product", "Adverse Event", "Count", "Expected Count",
             "quantile", "count/expected", "product margin", "event margin",
-            "fdr", "FNR", "Se", "Sp",
+            "fdr", "FNR", "FOR", "Se", "Sp",
         ])
         assert hasattr(result, "param")
         assert "prior_param" in result.param
@@ -526,3 +526,83 @@ class TestRobustnessAndEdgeCases:
             assert not np.isinf(res.all_signals[name]).any()
             assert not np.isnan(res.all_signals[name]).any()
             assert not np.isnan(res.all_signals["p_value"]).any()
+
+
+# ---------------------------------------------------------------------------
+# Bayesian Decision Metrics (FDR, FNR, FOR, Se, Sp) Tests
+# ---------------------------------------------------------------------------
+
+class TestBayesianDecisionMetrics:
+    def test_compute_bayesian_metrics_exact_math(self):
+        from vigipy.utils.common import compute_bayesian_metrics
+
+        # 5 candidate signals with known posterior null probabilities P(H0)
+        p_h0 = np.array([0.05, 0.10, 0.30, 0.70, 0.85])
+        FDR, FNR, FOR, Se, Sp = compute_bayesian_metrics(p_h0, num_cell=5)
+
+        # 1. FDR matches cumulative mean null probability
+        np.testing.assert_allclose(FDR, [0.05, 0.075, 0.15, 0.2875, 0.40], rtol=1e-5)
+
+        # 2. Sensitivity (Se) = TP_cum / Total_True_Signals (Total Signal = 3.0)
+        expected_se = np.array([0.95, 1.85, 2.55, 2.85, 3.00]) / 3.0
+        np.testing.assert_allclose(Se, expected_se, rtol=1e-5)
+
+        # 3. FNR = 1.0 - Se (classic miss rate)
+        np.testing.assert_allclose(FNR, 1.0 - expected_se, rtol=1e-5)
+        np.testing.assert_allclose(FNR + Se, 1.0, rtol=1e-5)
+
+        # 4. FOR = Missed signals / remaining unselected cells
+        expected_for = [2.05 / 4.0, 1.15 / 3.0, 0.45 / 2.0, 0.15 / 1.0, 0.0]
+        np.testing.assert_allclose(FOR, expected_for, rtol=1e-5, atol=1e-6)
+
+        # 5. Specificity (Sp) = Remaining true negatives / total true negatives (Total Null = 2.0)
+        expected_sp = np.array([1.95, 1.85, 1.55, 0.85, 0.0]) / 2.0
+        np.testing.assert_allclose(Sp, expected_sp, rtol=1e-5)
+
+        # 6. All metrics bounded in [0, 1]
+        for m in (FDR, FNR, FOR, Se, Sp):
+            assert (m >= 0.0).all() and (m <= 1.0).all()
+
+    def test_bcpnn_and_gps_report_fnr_and_for(self, converted_data):
+        from vigipy import bcpnn, gps
+
+        res_b = bcpnn(converted_data, min_events=3)
+        assert "FNR" in res_b.all_signals.columns
+        assert "FOR" in res_b.all_signals.columns
+        np.testing.assert_allclose(
+            res_b.all_signals["FNR"] + res_b.all_signals["Se"],
+            1.0,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
+        res_g = gps(converted_data, min_events=3, truncate=True)
+        assert "FNR" in res_g.all_signals.columns
+        assert "FOR" in res_g.all_signals.columns
+        np.testing.assert_allclose(
+            res_g.all_signals["FNR"] + res_g.all_signals["Se"],
+            1.0,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
+    def test_edge_cases(self):
+        from vigipy.utils.common import compute_bayesian_metrics
+
+        # Empty inputs
+        empty = np.array([])
+        FDR, FNR, FOR, Se, Sp = compute_bayesian_metrics(empty, num_cell=0)
+        assert len(FDR) == len(FNR) == len(FOR) == len(Se) == len(Sp) == 0
+
+        # Unsorted inputs with rank_stat: verify output matches correct row indices
+        p_raw = np.array([0.85, 0.05, 0.70, 0.10, 0.30])
+        # Suppose ranking by p-value ascending (0.05 is rank 1, 0.85 is rank 5)
+        FDR, FNR, FOR, Se, Sp = compute_bayesian_metrics(p_raw, num_cell=5, ranking_statistic="p_value")
+        # Item at index 1 (p=0.05) is the highest priority alert (rank 1)
+        assert np.isclose(FDR[1], 0.05)
+        assert np.isclose(Se[1], 0.95 / 3.0)
+        assert np.isclose(FNR[1], 1.0 - 0.95 / 3.0)
+        # Item at index 0 (p=0.85) is the lowest priority (rank 5)
+        assert np.isclose(Se[0], 1.0)
+        assert np.isclose(FNR[0], 0.0)
+
