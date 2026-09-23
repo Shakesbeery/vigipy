@@ -205,6 +205,12 @@ class LASSOConfig:
     use_glm: bool = False
     nb_alpha: float = 1
     lasso_alpha: float = 1e-9
+    family: str = "logistic"
+    C: float = 1.0
+    decision_metric: str = "lower_bound"
+    use_cv: bool = False
+    cv: int = 3
+    use_bootstrap: bool = False
 
 
 MethodConfig = Union[PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, LASSOConfig]

@@ -5,8 +5,15 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
+import scipy.stats as stats
 import statsmodels.api as sm
-from sklearn.linear_model import Lasso, LassoLars, LassoLarsIC
+from sklearn.linear_model import (
+    Lasso,
+    LassoLars,
+    LassoLarsIC,
+    LogisticRegression,
+    LogisticRegressionCV,
+)
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils.common import build_params
@@ -26,6 +33,12 @@ def lasso(
     use_glm: bool = False,
     nb_alpha: float = 1,
     lasso_alpha: float = 1e-9,
+    family: Literal["logistic", "linear", "negative_binomial"] = "logistic",
+    C: float = 1.0,
+    decision_metric: Literal["lower_bound", "coefficient"] = "lower_bound",
+    use_cv: bool = False,
+    cv: int = 3,
+    use_bootstrap: bool = False,
 ) -> AnalysisResult:
     """
     Applies LASSO regression or its variants to detect signals between product features and adverse events,
@@ -75,6 +88,13 @@ def lasso(
     - Confidence intervals for the LASSO coefficients are generated via bootstrapping iff `use_glm` is False.
     - The function iterates over adverse events, using product features as predictors, and applies the chosen LASSO model to find associations.
     """
+    if use_glm:
+        resolved_family = "negative_binomial"
+    elif use_lars or use_IC:
+        resolved_family = "linear"
+    else:
+        resolved_family = family
+
     input_params = {
         "lasso_thresh": lasso_thresh,
         "alpha": alpha,
@@ -87,79 +107,226 @@ def lasso(
         "use_glm": use_glm,
         "nb_alpha": nb_alpha,
         "lasso_alpha": lasso_alpha,
+        "family": resolved_family,
+        "C": C,
+        "decision_metric": decision_metric,
+        "use_cv": use_cv,
+        "cv": cv,
+        "use_bootstrap": use_bootstrap,
     }
     X = container.product_features
     ys = container.event_outcomes
     X_arr = np.ascontiguousarray(X.values, dtype=np.float64)
-    n_samples = len(X_arr)
-    rng = np.random.default_rng()
+    n_samples, n_features = X_arr.shape
+    products = list(X.columns)
+    rng = np.random.default_rng(42)
+    z_crit = float(stats.norm.ppf(1.0 - (100.0 - ci) / 200.0))
     res = defaultdict(list)
 
     if lasso_kwargs is None:
         lasso_kwargs = dict()
 
-    # Set type of LASSO per user inputs
-    if use_glm:
-        pass
-    elif use_IC:
-        lasso = LassoLarsIC(criterion=IC_criterion, **lasso_kwargs)
-    elif use_lars:
-        lasso = LassoLars(alpha=alpha, **lasso_kwargs)
-    else:
-        lasso = Lasso(alpha=alpha, **lasso_kwargs)
+    # Pre-instantiate linear model if family == 'linear'
+    if resolved_family == "linear":
+        if use_IC:
+            lin_model = LassoLarsIC(criterion=IC_criterion, **lasso_kwargs)
+        elif use_lars:
+            lin_model = LassoLars(alpha=alpha, **lasso_kwargs)
+        else:
+            lin_model = Lasso(alpha=alpha, **lasso_kwargs)
 
-    # Iterate over adverse events using product as features for DA
+    # Iterate over adverse events using product features for DA
     for column in ys.columns:
-        y = ys[column].values
-        if y.sum() < min_events:
-            for product in X.columns:
+        y = np.ascontiguousarray(ys[column].values, dtype=np.float64)
+        total_events = float(np.sum(y))
+
+        # Calculate co-occurrence count for each product
+        counts = np.sum(X_arr * y[:, None], axis=0).astype(int)
+
+        if total_events < min_events:
+            for idx, product in enumerate(products):
                 res["Product"].append(product)
                 res["Adverse Event"].append(column)
-                res["LASSO Coefficient"].append(0)
-                res["CI Lower"].append(0)
-                res["CI Upper"].append(0)
+                res["Count"].append(int(counts[idx]))
+                res["LASSO Coefficient"].append(0.0)
+                res["CI Lower"].append(0.0)
+                res["CI Upper"].append(0.0)
+                if resolved_family == "logistic":
+                    res["aROR"].append(1.0)
+                    res["aROR Lower"].append(1.0)
+                    res["aROR Upper"].append(1.0)
+                    res["SE"].append(0.0)
+                    res["p_value"].append(1.0)
             continue
 
-        if use_glm:
+        if resolved_family == "logistic":
+            pos_cases = int(np.sum(y))
+            neg_cases = len(y) - pos_cases
+            if use_cv and min(pos_cases, neg_cases) >= cv:
+                cv_kwargs = dict(
+                    Cs=[0.05, 0.1, 0.5, 1.0, 2.0],
+                    cv=cv,
+                    penalty="l1",
+                    solver="liblinear",
+                    scoring="roc_auc",
+                    fit_intercept=True,
+                    random_state=42,
+                )
+                if lasso_kwargs:
+                    cv_kwargs.update(lasso_kwargs)
+                clf = LogisticRegressionCV(**cv_kwargs)
+            else:
+                log_kwargs = dict(
+                    penalty="l1",
+                    solver="liblinear",
+                    C=C,
+                    fit_intercept=True,
+                    random_state=42,
+                )
+                if lasso_kwargs:
+                    log_kwargs.update(lasso_kwargs)
+                clf = LogisticRegression(**log_kwargs)
+
+            clf.fit(X_arr, y)
+            coefs = clf.coef_[0]
+
+            if use_bootstrap:
+                boot_coefs_list = []
+                for _ in range(num_bootstrap):
+                    b_idx = rng.choice(n_samples, size=n_samples, replace=True)
+                    y_b = y[b_idx]
+                    if len(np.unique(y_b)) < 2:
+                        boot_coefs_list.append(np.zeros(n_features))
+                        continue
+                    clf_b = LogisticRegression(
+                        penalty="l1",
+                        solver="liblinear",
+                        C=C,
+                        fit_intercept=True,
+                        random_state=42,
+                        **lasso_kwargs,
+                    )
+                    clf_b.fit(X_arr[b_idx], y_b)
+                    boot_coefs_list.append(clf_b.coef_[0].copy())
+                boot_arr = np.array(boot_coefs_list)
+                ci_l = np.percentile(boot_arr, (100.0 - ci) / 2.0, axis=0)
+                ci_u = np.percentile(boot_arr, 100.0 - (100.0 - ci) / 2.0, axis=0)
+                se_vec = np.std(boot_arr, axis=0)
+                z_sc = np.abs(coefs) / np.maximum(se_vec, 1e-9)
+                p_vec = np.clip(2.0 * (1.0 - stats.norm.cdf(z_sc)), 0.0, 1.0)
+            else:
+                # Fast, exact post-LASSO Fisher Information standard errors
+                p_pred = clf.predict_proba(X_arr)[:, 1]
+                p_pred = np.clip(p_pred, 1e-6, 1.0 - 1e-6)
+                w = p_pred * (1.0 - p_pred)
+
+                active_mask = np.abs(coefs) > 1e-6
+                active_indices = np.where(active_mask)[0]
+
+                ci_l = np.zeros(n_features)
+                ci_u = np.zeros(n_features)
+                se_vec = np.zeros(n_features)
+                p_vec = np.ones(n_features)
+
+                if len(active_indices) > 0:
+                    is_partition = bool(np.allclose(np.sum(X_arr[:, active_indices], axis=1), 1.0))
+                    if is_partition:
+                        X_sub = X_arr[:, active_indices]
+                        H = X_sub.T @ (w[:, None] * X_sub) + 1e-4 * np.eye(len(active_indices))
+                        offset = 0
+                    else:
+                        X_sub = np.column_stack([np.ones(n_samples), X_arr[:, active_indices]])
+                        H = X_sub.T @ (w[:, None] * X_sub) + 1e-4 * np.eye(len(active_indices) + 1)
+                        offset = 1
+
+                    try:
+                        V = np.linalg.inv(H)
+                        active_se = np.sqrt(np.maximum(np.diag(V)[offset:], 1e-8))
+                        se_vec[active_indices] = active_se
+                        ci_l[active_indices] = coefs[active_indices] - z_crit * active_se
+                        ci_u[active_indices] = coefs[active_indices] + z_crit * active_se
+                        z_scores = np.abs(coefs[active_indices]) / active_se
+                        p_vec[active_indices] = np.clip(2.0 * (1.0 - stats.norm.cdf(z_scores)), 0.0, 1.0)
+                    except np.linalg.LinAlgError:
+                        diag_w = np.sum(w[:, None] * (X_arr[:, active_indices] ** 2), axis=0) + 1e-4
+                        active_se = 1.0 / np.sqrt(diag_w)
+                        se_vec[active_indices] = active_se
+                        ci_l[active_indices] = coefs[active_indices] - z_crit * active_se
+                        ci_u[active_indices] = coefs[active_indices] + z_crit * active_se
+                        z_scores = np.abs(coefs[active_indices]) / active_se
+                        p_vec[active_indices] = np.clip(2.0 * (1.0 - stats.norm.cdf(z_scores)), 0.0, 1.0)
+
+            aror = np.exp(coefs)
+            aror_l = np.exp(ci_l)
+            aror_u = np.exp(ci_u)
+
+            for idx, product in enumerate(products):
+                res["Product"].append(product)
+                res["Adverse Event"].append(column)
+                res["Count"].append(int(counts[idx]))
+                res["LASSO Coefficient"].append(float(coefs[idx]))
+                res["CI Lower"].append(float(ci_l[idx]))
+                res["CI Upper"].append(float(ci_u[idx]))
+                res["aROR"].append(float(aror[idx]))
+                res["aROR Lower"].append(float(aror_l[idx]))
+                res["aROR Upper"].append(float(aror_u[idx]))
+                res["SE"].append(float(se_vec[idx]))
+                res["p_value"].append(float(p_vec[idx]))
+
+        elif resolved_family == "negative_binomial":
             nb = sm.GLM(y, X, family=sm.families.NegativeBinomial(alpha=nb_alpha))
             results = nb.fit_regularized(L1_wt=1, alpha=lasso_alpha)
             all_coefs = np.clip(results.params.values.copy(), 0, None)
-            ci_lower = np.zeros(len(all_coefs))
-            ci_upper = np.zeros(len(all_coefs))
+            ci_l = np.zeros(len(all_coefs))
+            ci_u = np.zeros(len(all_coefs))
+
+            for idx, product in enumerate(products):
+                res["Product"].append(product)
+                res["Adverse Event"].append(column)
+                res["Count"].append(int(counts[idx]))
+                res["LASSO Coefficient"].append(float(all_coefs[idx]))
+                res["CI Lower"].append(float(ci_l[idx]))
+                res["CI Upper"].append(float(ci_u[idx]))
+
         else:
-            lasso.fit(X_arr, y)
-            all_coefs = lasso.coef_.copy()
+            # Linear LASSO
+            lin_model.fit(X_arr, y)
+            all_coefs = lin_model.coef_.copy()
 
-            # Initialize a list to store bootstrap coefficients
             bootstrap_coefficients = []
-
-            # Bootstrap resampling
             for _ in range(num_bootstrap):
-                # Sample with replacement using fast array indexing
-                bootstrap_sample_indices = rng.choice(n_samples, size=n_samples, replace=True)
-                X_bootstrap = X_arr[bootstrap_sample_indices]
-                y_bootstrap = y[bootstrap_sample_indices]
+                b_idx = rng.choice(n_samples, size=n_samples, replace=True)
+                lin_model.fit(X_arr[b_idx], y[b_idx])
+                bootstrap_coefficients.append(lin_model.coef_.copy())
 
-                # Fit LASSO model to bootstrap sample
-                lasso.fit(X_bootstrap, y_bootstrap)
-                boot_coefs = lasso.coef_.copy()
-                bootstrap_coefficients.append(boot_coefs)
+            boot_arr = np.array(bootstrap_coefficients)
+            ci_l = np.percentile(boot_arr, (100.0 - ci) / 2.0, axis=0)
+            ci_u = np.percentile(boot_arr, 100.0 - (100.0 - ci) / 2.0, axis=0)
 
-            bootstrap_coefficients = np.array(bootstrap_coefficients)
-
-            # Calculate confidence intervals for each coefficient
-            ci_lower = np.percentile(bootstrap_coefficients, (100 - ci) / 2.0, axis=0)
-            ci_upper = np.percentile(bootstrap_coefficients, 100 - (100 - ci) / 2.0, axis=0)
-
-        for product, co, ci_u, ci_l in zip(X.columns, all_coefs, ci_upper, ci_lower):
-            res["Product"].append(product)
-            res["Adverse Event"].append(column)
-            res["LASSO Coefficient"].append(co)
-            res["CI Lower"].append(ci_l)
-            res["CI Upper"].append(ci_u)
+            for idx, product in enumerate(products):
+                res["Product"].append(product)
+                res["Adverse Event"].append(column)
+                res["Count"].append(int(counts[idx]))
+                res["LASSO Coefficient"].append(float(all_coefs[idx]))
+                res["CI Lower"].append(float(ci_l[idx]))
+                res["CI Upper"].append(float(ci_u[idx]))
 
     all_signals = pd.DataFrame(res).sort_values(by="LASSO Coefficient", ascending=False)
-    signals = all_signals.loc[all_signals["LASSO Coefficient"] > lasso_thresh]
+    all_signals.reset_index(drop=True, inplace=True)
+
+    if resolved_family == "logistic":
+        if decision_metric == "lower_bound":
+            signals = all_signals.loc[
+                (all_signals["CI Lower"] > lasso_thresh) & (all_signals["Count"] >= min_events)
+            ].copy()
+        else:
+            signals = all_signals.loc[
+                (all_signals["LASSO Coefficient"] > lasso_thresh) & (all_signals["Count"] >= min_events)
+            ].copy()
+    else:
+        signals = all_signals.loc[all_signals["LASSO Coefficient"] > lasso_thresh].copy()
+
+    signals.reset_index(drop=True, inplace=True)
 
     return AnalysisResult(
         all_signals=all_signals,

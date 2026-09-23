@@ -12,7 +12,10 @@ from .config import (
     MethodConfig,
 )
 
+__version__ = "3.1.0"
+
 __all__ = [
+    "__version__",
     # Original function API
     "prr", "ror", "rfet", "gps", "bcpnn", "lasso",
     # Data conversion

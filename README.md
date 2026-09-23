@@ -1,8 +1,8 @@
 # vigipy
 
 > [!IMPORTANT]
-> **Major Release — `vigipy` v3.0 is live!**
-> This major release introduces an extensive modernization of the library:
+> **Release — `vigipy` v3.1 is live!**
+> Modernized disproportionality analysis and pharmacovigilance with typed execution and rigorous inference:
 > - **Unified Interface**: Typed execution via `analyze()`, `analyze_all()`, and configuration dataclasses (`PRRConfig`, `RORConfig`, `RFETConfig`, `BCPNNConfig`, `GPSConfig`, `LASSOConfig`).
 > - **Statistical & Mathematical Rigor**: Corrected FDR step-up monotonicity, decision-theoretic Bayesian metrics (FDR, FNR, FOR, Se, Sp), RFET mid-$p$ parameter order, and Haldane-Anscombe (+0.5) zero-cell continuity corrections.
 > - **Vectorized Performance**: Fully vectorized core operations, replacing SymPy with native SciPy C-routines for >50% speedups.
@@ -145,8 +145,16 @@ bcpnn_res = bcpnn(data, min_events=3, ranking_statistic="quantile")
 # Empirical Bayes: Gamma Poisson Shrinker
 gps_res = gps(data, min_events=5, decision_metric="rank", ranking_statistic="log2")
 
+# Multivariable Regularized Regression (LASSO) with Adjusted Odds Ratios
+from vigipy import convert_binary, lasso
+
+# Convert data (optionally grouping concurrent medications by report_id for polypharmacy adjustment)
+bin_data = convert_binary(df, product_label="name", ae_label="AE", report_id_label="report_id")
+lasso_res = lasso(bin_data, min_events=3, C=1.0, decision_metric="lower_bound")
+
 # Access results
 print(gps_res.signals[["Product", "Adverse Event", "Count", "quantile", "fdr"]].head())
+print(lasso_res.signals[["Product", "Adverse Event", "Count", "aROR", "CI Lower", "CI Upper", "p_value"]].head())
 gps_res.export("gps_signals.xlsx")
 ```
 
@@ -160,6 +168,7 @@ gps_res.export("gps_signals.xlsx")
 * `"fdr"` - Controls the False Discovery Rate at `decision_thres` (default: `0.05`) using Local Bayes Estimation (LBE) or cumulative posterior null probabilities.
 * `"rank"` - Retains signals where the ranking statistic meets `decision_thres`. For p-values, selects values $\le \text{threshold}$; for confidence/credible bounds, selects values $\ge \text{threshold}$.
 * `"signals"` - Selects the top $N$ ranked candidates up to `decision_thres`.
+* For **LASSO**: `"lower_bound"` (selects signals where CI Lower > threshold, requiring $\text{aROR}_{\text{lower}} > 1.0$) and `"coefficient"` (selects signals where $\beta > \text{threshold}$).
 
 ### Ranking Statistics (`ranking_statistic`)
 | Method | Supported Statistics | Notes |
@@ -168,6 +177,7 @@ gps_res.export("gps_signals.xlsx")
 | **RFET** | `"p_value"` | Exact hypergeometric p-value (supports `mid_pval=True`). |
 | **BCPNN** | `"quantile"`, `"p_value"` | `"quantile"` ranks by $IC_{025}$ (lower 95% credible bound). |
 | **GPS** | `"log2"`, `"quantile"`, `"p_value"` | `"log2"` ranks by $EB_{05}$ of $\log_2(\lambda)$, shrinked towards expected counts. |
+| **LASSO** | `"aROR"`, `"LASSO Coefficient"` | Default $L_1$-penalized logistic regression with intercept. Returns adjusted Odds Ratios ($\text{aROR} = \exp(\beta)$), Wald 95% CIs, SE, and Wald p-values. |
 
 ---
 
