@@ -326,6 +326,96 @@ class TestLASSO:
         assert result.param["method"] == "lasso"
         assert "lasso_thresh" in result.param["input_params"]
 
+    def test_logistic_lasso_defaults(self, binary_data):
+        result = lasso(binary_data, min_events=3)
+        assert_valid_result(result, [
+            "Product", "Adverse Event", "Count", "LASSO Coefficient",
+            "aROR", "CI Lower", "CI Upper", "aROR Lower", "aROR Upper",
+            "SE", "p_value",
+        ])
+        assert result.num_signals > 0  # Should detect signals by default
+        assert (result.all_signals["aROR"] > 0).all()
+        assert (result.all_signals["p_value"] >= 0).all() and (result.all_signals["p_value"] <= 1.0).all()
+
+    def test_logistic_decision_metrics(self, binary_data):
+        res_lb = lasso(binary_data, decision_metric="lower_bound", min_events=3)
+        res_coef = lasso(binary_data, decision_metric="coefficient", min_events=3)
+        assert res_lb.num_signals <= res_coef.num_signals
+        assert (res_lb.signals["CI Lower"] > 0).all()
+
+    def test_logistic_cv(self, binary_data):
+        from vigipy.utils.Container import DataContainer
+        sub_container = DataContainer(
+            data=binary_data.data,
+            N=binary_data.N,
+            product_features=binary_data.product_features,
+            event_outcomes=binary_data.event_outcomes[["Traumatic injury", "Seroma"]],
+            type=binary_data.type,
+        )
+        result = lasso(sub_container, use_cv=True, cv=3, min_events=3)
+        assert_valid_result(result)
+        assert result.num_signals > 0
+
+    def test_logistic_bootstrap(self, binary_data):
+        from vigipy.utils.Container import DataContainer
+        sub_container = DataContainer(
+            data=binary_data.data,
+            N=binary_data.N,
+            product_features=binary_data.product_features,
+            event_outcomes=binary_data.event_outcomes[["Traumatic injury", "Seroma"]],
+            type=binary_data.type,
+        )
+        result = lasso(sub_container, use_bootstrap=True, num_bootstrap=5, min_events=3)
+        assert_valid_result(result)
+
+    def test_polypharmacy_confounding_adjustment(self):
+        from vigipy import convert_binary
+
+        # Synthetic polypharmacy dataset:
+        # Drug A is a true toxic drug causing Jaundice (50 reports).
+        # Drug B is an innocent bystander frequently co-prescribed with Drug A.
+        # Drug C is background control.
+        records = []
+        report_id = 0
+
+        # 40 reports with Drug A + Drug B + Jaundice
+        for _ in range(40):
+            records.append({"report_id": report_id, "name": "DrugA", "AE": "Jaundice", "count": 1})
+            records.append({"report_id": report_id, "name": "DrugB", "AE": "Jaundice", "count": 1})
+            report_id += 1
+
+        # 10 reports with Drug A alone + Jaundice
+        for _ in range(10):
+            records.append({"report_id": report_id, "name": "DrugA", "AE": "Jaundice", "count": 1})
+            report_id += 1
+
+        # 50 reports with Drug B alone + Headache (no Jaundice)
+        for _ in range(50):
+            records.append({"report_id": report_id, "name": "DrugB", "AE": "Headache", "count": 1})
+            report_id += 1
+
+        # 200 reports with Drug C + Headache
+        for _ in range(200):
+            records.append({"report_id": report_id, "name": "DrugC", "AE": "Headache", "count": 1})
+            report_id += 1
+
+        df = pd.DataFrame(records)
+        container = convert_binary(df, report_id_label="report_id")
+        assert container.type == "binary_report"
+        assert container.product_features.shape[1] == 3
+
+        # Run multivariable LASSO
+        res = lasso(container, min_events=3, C=1.0)
+        jaundice_signals = res.all_signals[res.all_signals["Adverse Event"] == "Jaundice"]
+
+        drugA_row = jaundice_signals[jaundice_signals["Product"] == "DrugA"].iloc[0]
+        drugB_row = jaundice_signals[jaundice_signals["Product"] == "DrugB"].iloc[0]
+
+        # Drug A should have a strong positive coefficient
+        assert drugA_row["LASSO Coefficient"] > 1.0
+        # Drug B should have a significantly smaller coefficient than Drug A
+        assert drugA_row["LASSO Coefficient"] > drugB_row["LASSO Coefficient"] + 1.0
+
 
 # ---------------------------------------------------------------------------
 # LongitudinalModel Tests

@@ -89,7 +89,13 @@ def compute_contingency(data_frame, product_label, count_label, ae_label, margin
 
 
 def convert_binary(
-    data, product_label="name", ae_label="AE", use_counts=False, count_label="count", expand_counts=True
+    data,
+    product_label="name",
+    ae_label="AE",
+    use_counts=False,
+    count_label="count",
+    expand_counts=True,
+    report_id_label=None,
 ):
     """Convert input data consisting of unique product-event pairs into a
        binary dataframe indicating which event and which product are
@@ -99,12 +105,33 @@ def convert_binary(
         data (pd.DataFrame): A DataFrame consisting of unique product-event pairs for each row
         product_label (str, optional): If the product name is not in a column called `name`, override here. Defaults to "name".
         ae_label (str, optional): If the adverse event is not in a column called `AE`, override here.. Defaults to "AE".
+        use_counts (bool, optional): Whether to use aggregated count representation. Defaults to False.
+        count_label (str, optional): Column name containing counts. Defaults to "count".
+        expand_counts (bool, optional): Whether to expand counts > 1 into duplicate rows. Defaults to True.
+        report_id_label (str, optional): Column name for report/patient IDs. When specified, groups co-reported
+            products and adverse events at the individual report level. Defaults to None.
 
     Returns:
         Container: A container with two binary dataframes. One is the X data of product names and the other is the
         y data with adverse events. Index locations are associated with the input DataFrame.
 
     """
+    if report_id_label is not None and report_id_label in data.columns:
+        data_clean = _sanitize_data(data, [product_label, ae_label, count_label, report_id_label])
+        prod_df = pd.crosstab(data_clean[report_id_label], data_clean[product_label]).clip(upper=1)
+        event_df = pd.crosstab(data_clean[report_id_label], data_clean[ae_label]).clip(upper=1)
+        common_idx = prod_df.index.intersection(event_df.index)
+        prod_df = prod_df.loc[common_idx]
+        event_df = event_df.loc[common_idx]
+
+        return DataContainer(
+            data=data_clean,
+            N=len(common_idx),
+            product_features=prod_df,
+            event_outcomes=event_df,
+            type="binary_report",
+        )
+
     # Sanitize df to remove unnecessary information during transforms
     data = _sanitize_data(data, [product_label, ae_label, count_label])
 
