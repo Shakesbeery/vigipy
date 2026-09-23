@@ -462,7 +462,7 @@ class TestFDRAndLBE:
 
         post_prob = np.array([0.05, 0.001, 0.02, 0.01])
         rank_stat = np.array([1.5, 1.2, 1.8, 1.0])
-        fdr, fnr, se, sp = compute_bayesian_metrics(post_prob, len(post_prob), "quantile", rank_stat)
+        fdr, fnr, for_val, se, sp = compute_bayesian_metrics(post_prob, len(post_prob), "quantile", rank_stat)
         sort_idx = np.argsort(-rank_stat)
         sorted_fdr = fdr[sort_idx]
         assert np.all(np.diff(sorted_fdr) >= -1e-10)
