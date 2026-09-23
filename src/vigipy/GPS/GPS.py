@@ -243,7 +243,7 @@ def gps(
     elif ranking_statistic == "log2":
         RankStat = np.asarray(EBlog2, dtype=np.float64)
 
-    FDR, FNR, Se, Sp = compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic, RankStat)
+    FDR, FNR, FOR, Se, Sp = compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic, RankStat)
     num_signals = determine_num_signals(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
     )
@@ -270,6 +270,7 @@ def gps(
                 "event margin": ni1,
                 "fdr": FDR,
                 "FNR": FNR,
+                "FOR": FOR,
                 "Se": Se,
                 "Sp": Sp,
             }
@@ -288,6 +289,7 @@ def gps(
                 "event margin": ni1,
                 "fdr": FDR,
                 "FNR": FNR,
+                "FOR": FOR,
                 "Se": Se,
                 "Sp": Sp,
                 "posterior_probability": posterior_probability,
@@ -306,6 +308,7 @@ def gps(
                 "event margin": ni1,
                 "fdr": FDR,
                 "FNR": FNR,
+                "FOR": FOR,
                 "Se": Se,
                 "Sp": Sp,
                 "LowerBound": LB,

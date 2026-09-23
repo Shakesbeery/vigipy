@@ -1,5 +1,15 @@
 # vigipy
 
+> [!IMPORTANT]
+> **Major Release — `vigipy` v3.0 is live!**
+> This major release introduces an extensive modernization of the library:
+> - **Unified Interface**: Typed execution via `analyze()`, `analyze_all()`, and configuration dataclasses (`PRRConfig`, `RORConfig`, `RFETConfig`, `BCPNNConfig`, `GPSConfig`, `LASSOConfig`).
+> - **Statistical & Mathematical Rigor**: Corrected FDR step-up monotonicity, decision-theoretic Bayesian metrics (FDR, FNR, FOR, Se, Sp), RFET mid-$p$ parameter order, and Haldane-Anscombe (+0.5) zero-cell continuity corrections.
+> - **Vectorized Performance**: Fully vectorized core operations, replacing SymPy with native SciPy C-routines for >50% speedups.
+> - **Permissive MIT License**: Formally relicensed under the MIT License.
+> 
+> *See the updated API documentation and examples below.*
+
 `vigipy` is a Python library bringing modern disproportionality analyses and pharmacovigilance techniques into the Python ecosystem with a clean, intuitive, and type-safe interface. Core disproportionality methods are adapted and extended from Ismail Ahmed and Antoine Poncet's [PhViD](https://cran.r-project.org/web/packages/PhViD/index.html) package, fully vectorized with native NumPy and SciPy routines.
 
 ### Top-level Functions & Classes:
