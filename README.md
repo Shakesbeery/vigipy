@@ -30,11 +30,11 @@
   * `LongitudinalModel()` - Apply any analysis method over time to evaluate cumulative or disjoint signal evolution
 * **Data Preparation**:
   * `convert()` - Convert adverse event and product count tables into a structured `DataContainer`
-  * `convert_binary()` - Generate binary product feature matrices and event outcome matrices for LASSO
+  * `convert_binary()` - Generate binary product feature matrices, event outcomes, and optional covariates for LASSO (supports sparse CSR storage)
   * `convert_multi_item()` - Aggregate co-occurring product columns into multi-item interaction tables
 * **Result & Data Containers**:
   * `AnalysisResult` - Structured container for `signals`, `all_signals`, `num_signals`, and model `params`, with `.export()` to Excel or CSV
-  * `DataContainer` - Typed container holding contingency, event, and product matrices
+  * `DataContainer` - Typed container holding contingency, event, product, and optional covariate matrices
 
 ---
 
@@ -91,7 +91,7 @@ The unified interface provides type safety, autocompletion, and consistent resul
 
 ```python
 import pandas as pd
-from vigipy import convert, analyze, analyze_all, PRRConfig, BCPNNConfig, GPSConfig
+from vigipy import convert, convert_binary, analyze, analyze_all, PRRConfig, BCPNNConfig, GPSConfig, LASSOConfig
 
 # 1. Load data and convert to a DataContainer
 df = pd.read_csv("AE_count_data.csv")
@@ -121,6 +121,11 @@ configs = [
 for cfg in configs:
     res = analyze(data, cfg)
     print(f"{cfg.method}: {res.num_signals} signals")
+
+# 5. Multivariable Relaxed LASSO with typed configuration
+bin_data = convert_binary(df, report_id_label="report_id", sparse=True)
+lasso_res = analyze(bin_data, LASSOConfig(min_events=3, relaxed=True, n_jobs=-1))
+print(f"LASSO: {lasso_res.num_signals} signals detected")
 ```
 
 ### Classic Function API
@@ -192,7 +197,7 @@ gps_res.export("gps_signals.xlsx")
 | **RFET** | `"p_value"` | Exact hypergeometric p-value (supports `mid_pval=True`). |
 | **BCPNN** | `"quantile"`, `"p_value"` | `"quantile"` ranks by $IC_{025}$ (lower 95% credible bound). |
 | **GPS** | `"log2"`, `"quantile"`, `"p_value"` | `"log2"` ranks by $EB_{05}$ of $\log_2(\lambda)$, shrinked towards expected counts. |
-| **LASSO** | `"aROR"`, `"LASSO Coefficient"` | Default $L_1$-penalized logistic regression with intercept. Returns adjusted Odds Ratios ($\text{aROR} = \exp(\beta)$), Wald 95% CIs, SE, and Wald p-values. |
+| **LASSO** | `"aROR"`, `"LASSO Coefficient"` | Two-stage Relaxed LASSO by default (`relaxed=True`: L1 screening + unpenalized refit). Returns debiased adjusted Odds Ratios ($\text{aROR} = \exp(\beta)$), L1 screening coefficients, relaxed coefficients, SVD pseudo-inverse Wald 95% CIs, SE, and Wald p-values. |
 
 ---
 
