@@ -13,7 +13,7 @@ from ..utils.common import compute_bayesian_metrics, determine_num_signals, buil
 from ..utils.types import DecisionMetric, GPSRankingStatistic, ExpectedMethod
 from ..utils.distribution_funcs.quantile_funcs import quantiles as _quantiles_scalar
 
-quantiles = np.vectorize(_quantiles_scalar)
+quantiles = np.vectorize(_quantiles_scalar, otypes=[np.float64])
 
 EPS = np.finfo(np.float32).eps
 BOUNDED_METHODS = {
@@ -109,6 +109,14 @@ def gps(
             "alpha2": 1.415,
             "beta2": 1.838,
             "w": 0.0969,
+        }
+    elif isinstance(prior_init, (list, tuple, np.ndarray)):
+        prior_init = {
+            "alpha1": float(prior_init[0]),
+            "beta1": float(prior_init[1]),
+            "alpha2": float(prior_init[2]),
+            "beta2": float(prior_init[3]),
+            "w": float(prior_init[4]),
         }
 
     input_params = {

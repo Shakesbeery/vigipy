@@ -887,3 +887,89 @@ class TestBayesianDecisionMetrics:
         assert np.isclose(Se[0], 1.0)
         assert np.isclose(FNR[0], 0.0)
 
+
+# ---------------------------------------------------------------------------
+# Confidence Intervals and Overflow Safeguards
+# ---------------------------------------------------------------------------
+
+class TestConfidenceIntervalsAndSafeguards:
+    def test_prr_and_ror_ci_columns(self, converted_data):
+        res_p = prr(converted_data, min_events=3)
+        assert "CI Lower" in res_p.all_signals.columns
+        assert "CI Upper" in res_p.all_signals.columns
+        assert (res_p.all_signals["CI Lower"] <= res_p.all_signals["PRR"] + 1e-6).all()
+        assert (res_p.all_signals["PRR"] <= res_p.all_signals["CI Upper"] + 1e-6).all()
+
+        res_r = ror(converted_data, min_events=3)
+        assert "CI Lower" in res_r.all_signals.columns
+        assert "CI Upper" in res_r.all_signals.columns
+        assert (res_r.all_signals["CI Lower"] <= res_r.all_signals["ROR"] + 1e-6).all()
+        assert (res_r.all_signals["ROR"] <= res_r.all_signals["CI Upper"] + 1e-6).all()
+
+    def test_ci_overflow_safeguard(self, converted_data):
+        """Verify no RuntimeWarning or overflow crash occurs when n01 -> 0 without continuity correction."""
+        import warnings
+        with warnings.catch_warnings(record=True) as recorded_warnings:
+            warnings.simplefilter("always")
+            res_r = ror(converted_data, min_events=3, continuity_correction=False)
+            res_p = prr(converted_data, min_events=3, continuity_correction=False)
+            overflow_warnings = [
+                w for w in recorded_warnings
+                if issubclass(w.category, RuntimeWarning) and "overflow" in str(w.message).lower()
+            ]
+            assert len(overflow_warnings) == 0
+        assert np.isfinite(res_r.all_signals["CI Lower"]).all()
+        assert np.isfinite(res_p.all_signals["CI Lower"]).all()
+        # Verify that extreme sparse cells produce inf for CI Upper cleanly
+        assert np.isinf(res_r.all_signals["CI Upper"]).any()
+        assert np.isinf(res_p.all_signals["CI Upper"]).any()
+
+
+# ---------------------------------------------------------------------------
+# Longitudinal Model Enhancements (Parallelism, Warm-Start, Memory Pruning)
+# ---------------------------------------------------------------------------
+
+class TestLongitudinalEnhancements:
+    def test_longitudinal_parallel_disjoint(self, sample_df):
+        lm_seq = LongitudinalModel(sample_df.copy(), "A")
+        lm_seq.run_disjoint(prr, False, n_jobs=1, min_events=3)
+
+        lm_par = LongitudinalModel(sample_df.copy(), "A")
+        lm_par.run_disjoint(prr, False, n_jobs=2, min_events=3)
+
+        assert len(lm_seq.results) == len(lm_par.results)
+        for (ts_s, res_s), (ts_p, res_p) in zip(lm_seq.results, lm_par.results):
+            assert ts_s == ts_p
+            if res_s is not None and res_p is not None:
+                assert res_s.num_signals == res_p.num_signals
+                np.testing.assert_allclose(
+                    res_s.signals["Count"].values,
+                    res_p.signals["Count"].values,
+                )
+
+    def test_longitudinal_parallel_cumulative(self, sample_df):
+        lm_par = LongitudinalModel(sample_df.copy(), "A")
+        lm_par.run(prr, True, n_jobs=2, min_events=3)
+        assert len(lm_par.results) > 0
+        for ts, res in lm_par.results:
+            assert ts is not None
+            if res is not None:
+                assert hasattr(res, "signals")
+
+    def test_longitudinal_warm_start_gps(self, sample_df):
+        lm_warm = LongitudinalModel(sample_df.copy(), "A")
+        lm_warm.run(gps, True, n_jobs=1, warm_start=True, min_events=3, truncate=True)
+        assert len(lm_warm.results) > 0
+        valid_results = [r for _, r in lm_warm.results if r is not None]
+        assert len(valid_results) > 0
+        assert valid_results[-1].num_signals > 0
+
+    def test_longitudinal_memory_pruning(self, sample_df):
+        lm = LongitudinalModel(sample_df.copy(), "A")
+        lm.run(prr, True, n_jobs=1, min_events=3, store_all_signals=False)
+        for ts, res in lm.results:
+            if res is not None:
+                assert len(res.all_signals) == 0
+                assert hasattr(res, "signals")
+                assert res.num_signals >= 0
+
