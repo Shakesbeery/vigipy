@@ -12,9 +12,9 @@ from ..utils.types import DecisionMetric, BCPNNRankingStatistic, ExpectedMethod
 def bcpnn(
     container: DataContainer,
     relative_risk: float = 1,
-    min_events: int = 1,
+    min_events: int = 3,
     decision_metric: DecisionMetric = "rank",
-    decision_thres: float = 0.05,
+    decision_thres: float = 0.0,
     ranking_statistic: BCPNNRankingStatistic = "quantile",
     MC: bool = False,
     num_MC: int = 10000,

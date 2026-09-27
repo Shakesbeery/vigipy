@@ -15,7 +15,7 @@ from ..utils.common import (
 def prr(
     container: DataContainer,
     relative_risk: float = 1,
-    min_events: int = 1,
+    min_events: int = 3,
     decision_metric: DecisionMetric = "fdr",
     decision_thres: float = 0.05,
     ranking_statistic: FreqRankingStatistic = "p_value",

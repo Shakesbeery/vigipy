@@ -166,14 +166,24 @@ class TestRFET:
         ).all()
 
     def test_golden_values(self, converted_data):
-        """Regression test: pin numeric output for RFET with default settings."""
-        result = rfet(converted_data, min_events=3, decision_metric="rank")
+        """Regression test: pin numeric output for RFET with standard Fisher test (mid_pval=False)."""
+        result = rfet(converted_data, min_events=3, decision_metric="rank", mid_pval=False)
         top = result.all_signals.iloc[0]
         assert top["Product"] == "PELVISOFT"
         assert top["Adverse Event"] == "Dehydration"
         assert top["Count"] == 518.0
         np.testing.assert_allclose(top["p_value"], 2.388804e-297, rtol=1e-3)
         assert result.num_signals == 143
+
+    def test_golden_values_mid_pval(self, converted_data):
+        """Regression test: pin numeric output for RFET with Lancaster mid-p correction (default)."""
+        result = rfet(converted_data, min_events=3, decision_metric="rank")
+        top = result.all_signals.iloc[0]
+        assert top["Product"] == "PELVISOFT"
+        assert top["Adverse Event"] == "Dehydration"
+        assert top["Count"] == 518.0
+        np.testing.assert_allclose(top["p_value"], 1.194402e-297, rtol=1e-3)
+        assert result.num_signals == 149
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +218,7 @@ class TestBCPNN:
         assert_valid_result(result)
 
     def test_golden_values_quantile(self, converted_data):
-        """Regression test: pin numeric output for BCPNN quantile ranking."""
+        """Regression test: pin numeric output for BCPNN quantile ranking with canonical WHO-UMC threshold (0.0)."""
         result = bcpnn(
             converted_data, min_events=3,
             decision_metric="rank", ranking_statistic="quantile",
@@ -217,6 +227,15 @@ class TestBCPNN:
         assert top["Product"] == "COLLAMEND"
         assert top["Adverse Event"] == "Plaque (lesion)"
         np.testing.assert_allclose(top["quantile"], 2.087242, rtol=1e-4)
+        assert result.num_signals == 74
+
+    def test_golden_values_quantile_legacy_threshold(self, converted_data):
+        """Regression test: pin numeric output for BCPNN quantile ranking with legacy 0.05 threshold."""
+        result = bcpnn(
+            converted_data, min_events=3,
+            decision_metric="rank", ranking_statistic="quantile",
+            decision_thres=0.05,
+        )
         assert result.num_signals == 66
 
     def test_golden_values_pvalue(self, converted_data):
@@ -224,6 +243,7 @@ class TestBCPNN:
         result = bcpnn(
             converted_data, min_events=3,
             decision_metric="rank", ranking_statistic="p_value",
+            decision_thres=0.05,
         )
         top = result.all_signals.iloc[0]
         assert top["Product"] == "PELVISOFT"
@@ -671,7 +691,7 @@ class TestAnalyze:
     def test_get_default_config(self):
         cfg = get_default_config("prr")
         assert cfg.method == "prr"
-        assert cfg.min_events == 1
+        assert cfg.min_events == 3
         assert cfg.decision_metric == "fdr"
 
     def test_get_default_config_invalid(self):

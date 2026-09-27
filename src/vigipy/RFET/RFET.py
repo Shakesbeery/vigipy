@@ -17,10 +17,10 @@ from ..utils.common import (
 def rfet(
     container: DataContainer,
     relative_risk: float = 1,
-    min_events: int = 1,
+    min_events: int = 3,
     decision_metric: DecisionMetric = "fdr",
     decision_thres: float = 0.05,
-    mid_pval: bool = False,
+    mid_pval: bool = True,
     expected_method: ExpectedMethod = "mantel-haentzel",
     method_alpha: float = 1,
     fdr_threshold: float = 0.05,
