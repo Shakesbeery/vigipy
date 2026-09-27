@@ -1,12 +1,13 @@
 # vigipy
 
 > [!IMPORTANT]
-> **Release — `vigipy` v3.1 is live!**
-> Modernized disproportionality analysis and pharmacovigilance with typed execution and rigorous inference:
-> - **Unified Interface**: Typed execution via `analyze()`, `analyze_all()`, and configuration dataclasses (`PRRConfig`, `RORConfig`, `RFETConfig`, `BCPNNConfig`, `GPSConfig`, `LASSOConfig`).
-> - **Statistical & Mathematical Rigor**: Corrected FDR step-up monotonicity, decision-theoretic Bayesian metrics (FDR, FNR, FOR, Se, Sp), RFET mid-$p$ parameter order, and Haldane-Anscombe (+0.5) zero-cell continuity corrections.
-> - **Vectorized Performance**: Fully vectorized core operations, replacing SymPy with native SciPy C-routines for >50% speedups.
-> - **Permissive MIT License**: Formally relicensed under the MIT License.
+> **Release — `vigipy` v3.2 is live!**
+> Advanced LASSO engine, sparse matrix architecture, and hardened numerical inference:
+> - **Relaxed LASSO & Inference**: Two-stage Relaxed LASSO (`relaxed=True`) for unattenuated adjusted odds ratios (aROR), SVD pseudo-inverse Fisher covariance for Wald CIs and p-values.
+> - **Covariate Adjustment**: Clinical and demographic confounder adjustment via `covariate_labels` in `convert_binary()`.
+> - **Sparse Matrix Architecture**: End-to-end CSR sparse representation (`sparse=True`) for multi-million report databases with massive memory savings.
+> - **Parallel Execution**: Multi-core parallelization across adverse events (`n_jobs`).
+> - **GPS Numerical Hardening**: Fully guarded likelihood and Bayesian posterior calculations against division-by-zero, log-of-zero, and underflow.
 > 
 > *See the updated API documentation and examples below.*
 
@@ -29,11 +30,11 @@
   * `LongitudinalModel()` - Apply any analysis method over time to evaluate cumulative or disjoint signal evolution
 * **Data Preparation**:
   * `convert()` - Convert adverse event and product count tables into a structured `DataContainer`
-  * `convert_binary()` - Generate binary product feature matrices and event outcome matrices for LASSO
+  * `convert_binary()` - Generate binary product feature matrices, event outcomes, and optional covariates for LASSO (supports sparse CSR storage)
   * `convert_multi_item()` - Aggregate co-occurring product columns into multi-item interaction tables
 * **Result & Data Containers**:
   * `AnalysisResult` - Structured container for `signals`, `all_signals`, `num_signals`, and model `params`, with `.export()` to Excel or CSV
-  * `DataContainer` - Typed container holding contingency, event, and product matrices
+  * `DataContainer` - Typed container holding contingency, event, product, and optional covariate matrices
 
 ---
 
@@ -90,7 +91,7 @@ The unified interface provides type safety, autocompletion, and consistent resul
 
 ```python
 import pandas as pd
-from vigipy import convert, analyze, analyze_all, PRRConfig, BCPNNConfig, GPSConfig
+from vigipy import convert, convert_binary, analyze, analyze_all, PRRConfig, BCPNNConfig, GPSConfig, LASSOConfig
 
 # 1. Load data and convert to a DataContainer
 df = pd.read_csv("AE_count_data.csv")
@@ -120,6 +121,11 @@ configs = [
 for cfg in configs:
     res = analyze(data, cfg)
     print(f"{cfg.method}: {res.num_signals} signals")
+
+# 5. Multivariable Relaxed LASSO with typed configuration
+bin_data = convert_binary(df, report_id_label="report_id", sparse=True)
+lasso_res = analyze(bin_data, LASSOConfig(min_events=3, relaxed=True, n_jobs=-1))
+print(f"LASSO: {lasso_res.num_signals} signals detected")
 ```
 
 ### Classic Function API
@@ -148,13 +154,27 @@ gps_res = gps(data, min_events=5, decision_metric="rank", ranking_statistic="log
 # Multivariable Regularized Regression (LASSO) with Adjusted Odds Ratios
 from vigipy import convert_binary, lasso
 
-# Convert data (optionally grouping concurrent medications by report_id for polypharmacy adjustment)
-bin_data = convert_binary(df, product_label="name", ae_label="AE", report_id_label="report_id")
-lasso_res = lasso(bin_data, min_events=3, C=1.0, decision_metric="lower_bound")
+# Convert data with sparse representation and optional covariate adjustment
+bin_data = convert_binary(
+    df,
+    product_label="name",
+    ae_label="AE",
+    report_id_label="report_id",
+    sparse=True,                        # Memory-efficient sparse CSR matrix
+    covariate_labels=["age", "sex"],    # Confounder adjustment (e.g. age, sex)
+)
+lasso_res = lasso(
+    bin_data,
+    min_events=3,
+    C=1.0,
+    relaxed=True,                       # Two-stage relaxed refit for debiased aRORs (default)
+    n_jobs=-1,                          # Parallel execution across AE columns (-1 for all CPUs)
+    decision_metric="lower_bound",
+)
 
 # Access results
 print(gps_res.signals[["Product", "Adverse Event", "Count", "quantile", "fdr"]].head())
-print(lasso_res.signals[["Product", "Adverse Event", "Count", "aROR", "CI Lower", "CI Upper", "p_value"]].head())
+print(lasso_res.signals[["Product", "Adverse Event", "Count", "L1 Coefficient", "LASSO Coefficient", "aROR", "CI Lower", "CI Upper", "p_value"]].head())
 gps_res.export("gps_signals.xlsx")
 ```
 
@@ -177,7 +197,7 @@ gps_res.export("gps_signals.xlsx")
 | **RFET** | `"p_value"` | Exact hypergeometric p-value (supports `mid_pval=True`). |
 | **BCPNN** | `"quantile"`, `"p_value"` | `"quantile"` ranks by $IC_{025}$ (lower 95% credible bound). |
 | **GPS** | `"log2"`, `"quantile"`, `"p_value"` | `"log2"` ranks by $EB_{05}$ of $\log_2(\lambda)$, shrinked towards expected counts. |
-| **LASSO** | `"aROR"`, `"LASSO Coefficient"` | Default $L_1$-penalized logistic regression with intercept. Returns adjusted Odds Ratios ($\text{aROR} = \exp(\beta)$), Wald 95% CIs, SE, and Wald p-values. |
+| **LASSO** | `"aROR"`, `"LASSO Coefficient"` | Two-stage Relaxed LASSO by default (`relaxed=True`: L1 screening + unpenalized refit). Returns debiased adjusted Odds Ratios ($\text{aROR} = \exp(\beta)$), L1 screening coefficients, relaxed coefficients, SVD pseudo-inverse Wald 95% CIs, SE, and Wald p-values. |
 
 ---
 
@@ -248,23 +268,49 @@ for timestamp, result in lm.results:
 
 LASSO regression models multiple products simultaneously, adjusting for co-prescriptions, confounding by indication, and polypharmacy.
 
-### 1. Pure Binary Matrix
-Each row represents an individual report or subject:
+### 1. Relaxed Logistic LASSO with Confounder Adjustment (Recommended)
+For pharmacovigilance safety surveillance, use two-stage Relaxed LASSO (`relaxed=True`, default) for debiased adjusted reporting odds ratios (aROR), sparse memory efficiency, and demographic/clinical confounder adjustment:
 
 ```python
 import pandas as pd
 from vigipy import convert_binary, lasso
 
 df = pd.read_csv("patient_reports.csv")
+
+# Group concurrent medications by report_id, adjust for covariates, and use sparse storage
+container = convert_binary(
+    df,
+    product_label="name",
+    ae_label="AE",
+    report_id_label="report_id",
+    sparse=True,                        # Memory-efficient sparse CSR matrix
+    covariate_labels=["age", "sex"],    # Clinical/demographic confounders
+)
+
+# Run multivariable Relaxed LASSO across all CPU cores
+result = lasso(
+    container,
+    min_events=3,
+    relaxed=True,                       # L1 screening + Stage 2 unpenalized refit (default)
+    n_jobs=-1,                          # Parallel execution across adverse events
+    decision_metric="lower_bound",      # Signal if 95% CI lower bound > 0
+)
+print(result.signals[["Product", "Adverse Event", "Count", "L1 Coefficient", "LASSO Coefficient", "aROR", "CI Lower", "CI Upper", "p_value"]])
+result.export("lasso_signals.xlsx")
+```
+
+### 2. Linear LASSO with Information Criterion
+For continuous outcomes or linear shrinkage:
+
+```python
 bin_data = convert_binary(df, product_label="name", ae_label="AE", use_counts=False)
 
 # Linear LASSO with Information Criterion model selection
 result = lasso(bin_data, use_IC=True, IC_criterion="bic", min_events=3)
 print(result.signals[["Product", "Adverse Event", "LASSO Coefficient", "CI Lower", "CI Upper"]])
-result.export("lasso_signals.xlsx")
 ```
 
-### 2. Count Outcomes & GLM LASSO
+### 3. Count Outcomes & GLM LASSO
 When aggregate event counts are used:
 
 ```python

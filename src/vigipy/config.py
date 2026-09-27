@@ -190,6 +190,11 @@ class LASSOConfig:
         use_glm: Whether to use Statsmodels L1-penalized Negative Binomial GLM instead of linear LASSO.
         nb_alpha: Dispersion parameter for Negative Binomial GLM.
         lasso_alpha: ElasticNet penalty parameter for GLM fitting.
+        relaxed: When True and family='logistic', applies two-stage Relaxed LASSO: L1 screening
+            followed by unpenalized refit on active features. Produces debiased coefficients and
+            more accurate aROR estimates. Default True.
+        n_jobs: Number of parallel jobs for fitting across adverse events. Use -1 for all CPUs,
+            1 for sequential (default). Only used when family='logistic'.
     """
 
     method: str = field(default="lasso", init=False)
@@ -211,6 +216,8 @@ class LASSOConfig:
     use_cv: bool = False
     cv: int = 3
     use_bootstrap: bool = False
+    relaxed: bool = True
+    n_jobs: int = 1
 
 
 MethodConfig = Union[PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, LASSOConfig]

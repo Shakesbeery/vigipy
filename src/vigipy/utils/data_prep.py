@@ -3,6 +3,7 @@ from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 
 from .Container import DataContainer
 
@@ -96,6 +97,8 @@ def convert_binary(
     count_label="count",
     expand_counts=True,
     report_id_label=None,
+    sparse=False,
+    covariate_labels=None,
 ):
     """Convert input data consisting of unique product-event pairs into a
        binary dataframe indicating which event and which product are
@@ -110,19 +113,46 @@ def convert_binary(
         expand_counts (bool, optional): Whether to expand counts > 1 into duplicate rows. Defaults to True.
         report_id_label (str, optional): Column name for report/patient IDs. When specified, groups co-reported
             products and adverse events at the individual report level. Defaults to None.
+        sparse (bool, optional): If True, construct sparse CSR-backed DataFrames to reduce memory
+            for large datasets. Defaults to False.
+        covariate_labels (list[str], optional): Column names for per-report covariates (e.g. ['age', 'sex']).
+            Requires report_id_label. Continuous covariates are standardized, categorical are
+            one-hot encoded with drop_first=True. Defaults to None.
 
     Returns:
         Container: A container with two binary dataframes. One is the X data of product names and the other is the
         y data with adverse events. Index locations are associated with the input DataFrame.
 
     """
+    if covariate_labels is not None and report_id_label is None:
+        raise ValueError(
+            "covariate_labels requires report_id_label to identify per-report covariates."
+        )
+
     if report_id_label is not None and report_id_label in data.columns:
-        data_clean = _sanitize_data(data, [product_label, ae_label, count_label, report_id_label])
-        prod_df = pd.crosstab(data_clean[report_id_label], data_clean[product_label]).clip(upper=1)
-        event_df = pd.crosstab(data_clean[report_id_label], data_clean[ae_label]).clip(upper=1)
+        keep_labels = [product_label, ae_label, count_label, report_id_label]
+        if covariate_labels:
+            keep_labels.extend(covariate_labels)
+        data_clean = _sanitize_data(data, keep_labels)
+
+        if sparse:
+            prod_df = _build_sparse_crosstab(data_clean, report_id_label, product_label)
+            event_df = _build_sparse_crosstab(data_clean, report_id_label, ae_label)
+        else:
+            prod_df = pd.crosstab(data_clean[report_id_label], data_clean[product_label]).clip(upper=1)
+            event_df = pd.crosstab(data_clean[report_id_label], data_clean[ae_label]).clip(upper=1)
+
         common_idx = prod_df.index.intersection(event_df.index)
         prod_df = prod_df.loc[common_idx]
         event_df = event_df.loc[common_idx]
+
+        # Extract and encode covariates
+        covariates = None
+        covariate_names = None
+        if covariate_labels:
+            covariates, covariate_names = _extract_covariates(
+                data_clean, report_id_label, covariate_labels, common_idx
+            )
 
         return DataContainer(
             data=data_clean,
@@ -130,6 +160,10 @@ def convert_binary(
             product_features=prod_df,
             event_outcomes=event_df,
             type="binary_report",
+            covariates=covariates,
+            feature_names=list(prod_df.columns),
+            event_names=list(event_df.columns),
+            covariate_names=covariate_names,
         )
 
     # Sanitize df to remove unnecessary information during transforms
@@ -146,18 +180,27 @@ def convert_binary(
     else:
         if data[count_label].max() > 1 and expand_counts:
             data = __expand_dataframe(data, count_label, ae_label, product_label)
-        event_df = pd.get_dummies(data[ae_label], prefix="", prefix_sep="")
-        event_df = event_df.T.groupby(level=0).sum().T
+        if sparse:
+            event_df = _build_sparse_dummies(data[ae_label])
+        else:
+            event_df = pd.get_dummies(data[ae_label], prefix="", prefix_sep="")
+            event_df = event_df.T.groupby(level=0).sum().T
         dc_type = "binary"
 
-    prod_df = pd.get_dummies(data[product_label], prefix="", prefix_sep="")
+    if sparse:
+        prod_df = _build_sparse_dummies(data[product_label])
+    else:
+        prod_df = pd.get_dummies(data[product_label], prefix="", prefix_sep="")
+        prod_df = prod_df.T.groupby(level=0).sum().T
 
     return DataContainer(
         data=data,
         N=data.shape[0],
-        product_features=prod_df.T.groupby(level=0).sum().T,
+        product_features=prod_df,
         event_outcomes=event_df,
         type=dc_type,
+        feature_names=list(prod_df.columns),
+        event_names=list(event_df.columns),
     )
 
 
@@ -245,6 +288,88 @@ def _sanitize_data(df, keep_labels):
             keep.append(label)
 
     return df[keep].copy()
+
+
+def _build_sparse_crosstab(data, index_label, column_label):
+    """Build a binary sparse DataFrame via categorical indexing.
+
+    Constructs a CSR matrix mapping (index_label × column_label) co-occurrences,
+    clipped to binary, and wraps it in a pandas SparseDtype DataFrame.
+    """
+    idx_cat = pd.Categorical(data[index_label])
+    col_cat = pd.Categorical(data[column_label])
+    row_codes = idx_cat.codes
+    col_codes = col_cat.codes
+    ones = np.ones(len(row_codes), dtype=np.float64)
+    csr = sp.coo_matrix(
+        (ones, (row_codes, col_codes)),
+        shape=(len(idx_cat.categories), len(col_cat.categories)),
+    ).tocsr()
+    # Clip to binary (co-occurrence → 0/1)
+    csr.data = np.minimum(csr.data, 1.0)
+    csr.eliminate_zeros()
+    result = pd.DataFrame.sparse.from_spmatrix(
+        csr, index=idx_cat.categories, columns=col_cat.categories
+    )
+    return result
+
+
+def _build_sparse_dummies(series):
+    """Build a sparse one-hot DataFrame from a categorical series.
+
+    Equivalent to pd.get_dummies but returns SparseDtype-backed DataFrame,
+    avoiding the deprecated pd.get_dummies(sparse=True).
+    """
+    cat = pd.Categorical(series)
+    n = len(cat)
+    row_idx = np.arange(n)
+    col_idx = cat.codes
+    # Filter out -1 codes (NaN values)
+    mask = col_idx >= 0
+    ones = np.ones(mask.sum(), dtype=np.float64)
+    csr = sp.coo_matrix(
+        (ones, (row_idx[mask], col_idx[mask])),
+        shape=(n, len(cat.categories)),
+    ).tocsr()
+    result = pd.DataFrame.sparse.from_spmatrix(
+        csr, columns=cat.categories
+    )
+    return result
+
+
+def _extract_covariates(data, report_id_label, covariate_labels, common_idx):
+    """Extract, aggregate, and encode per-report covariates.
+
+    Continuous covariates are standardized (mean=0, std=1) with a zero-variance guard.
+    Categorical covariates are one-hot encoded with drop_first=True.
+
+    Returns:
+        (covariates_df, covariate_names): DataFrame aligned to common_idx and list of column names.
+    """
+    # Aggregate covariates to one row per report (take first value per report)
+    cov_cols = [report_id_label] + list(covariate_labels)
+    cov_data = data[cov_cols].drop_duplicates(subset=[report_id_label]).set_index(report_id_label)
+    cov_data = cov_data.loc[common_idx]
+
+    encoded_parts = []
+    for col in covariate_labels:
+        series = cov_data[col]
+        if pd.api.types.is_numeric_dtype(series):
+            # Continuous: standardize with zero-variance guard
+            mu = series.mean()
+            sigma = series.std()
+            if sigma == 0 or pd.isna(sigma):
+                sigma = 1.0
+            standardized = (series - mu) / sigma
+            encoded_parts.append(standardized.to_frame(name=col))
+        else:
+            # Categorical: one-hot with drop_first
+            dummies = pd.get_dummies(series, prefix=col, prefix_sep="_", drop_first=True)
+            encoded_parts.append(dummies)
+
+    covariates_df = pd.concat(encoded_parts, axis=1).astype(np.float64)
+    covariate_names = list(covariates_df.columns)
+    return covariates_df, covariate_names
 
 
 def __expand_dataframe(df, count_label, ae_label, product_label):
