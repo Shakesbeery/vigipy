@@ -36,7 +36,8 @@ def assert_valid_result(result, expected_columns=None):
         assert set(expected_columns).issubset(result.all_signals.columns)
     for col in (
         "p_value", "PRR", "ROR", "RFET", "fdr", "quantile", "log2",
-        "Count", "Expected Count", "FNR", "FOR", "Se", "Sp", "LASSO Coefficient",
+        "Count", "Expected Count", "FNR", "FOR", "Se", "Sp",
+        "LASSO Coefficient", "L1 Coefficient",
     ):
         if col in result.all_signals.columns:
             assert result.all_signals[col].notna().all(), f"Column {col} contains NaN values"
@@ -282,6 +283,22 @@ class TestGPS:
         assert_valid_result(result)
         assert result.param["convergence"] == "User-provided priors"
 
+    def test_gps_truncated_extreme(self):
+        """Verify GPS with truncation on extreme counts produces no nan/inf."""
+        from vigipy import convert
+        df = pd.DataFrame({
+            "name": ["DrugA", "DrugB", "DrugC", "DrugD", "DrugA", "DrugE"],
+            "AE": ["AE1", "AE1", "AE2", "AE2", "AE3", "AE3"],
+            "count": [500, 1, 1, 10, 1, 1],
+        })
+        cont = convert(df, margin_threshold=1)
+        res = gps(cont, min_events=1, truncate=True, ranking_statistic="quantile")
+        assert_valid_result(res)
+        assert not np.isnan(res.all_signals["posterior_probability"]).any()
+        assert not np.isnan(res.all_signals["quantile"]).any()
+        assert not np.isinf(res.all_signals["posterior_probability"]).any()
+        assert not np.isinf(res.all_signals["quantile"]).any()
+
 
 # ---------------------------------------------------------------------------
 # LASSO Tests
@@ -415,6 +432,160 @@ class TestLASSO:
         assert drugA_row["LASSO Coefficient"] > 1.0
         # Drug B should have a significantly smaller coefficient than Drug A
         assert drugA_row["LASSO Coefficient"] > drugB_row["LASSO Coefficient"] + 1.0
+
+    def test_relaxed_lasso_debiasing(self):
+        from vigipy import convert_binary
+
+        records = []
+        report_id = 0
+        for _ in range(50):
+            records.append({"report_id": report_id, "name": "DrugA", "AE": "Arrhythmia", "count": 1})
+            report_id += 1
+        for _ in range(100):
+            records.append({"report_id": report_id, "name": "DrugB", "AE": "Fatigue", "count": 1})
+            report_id += 1
+        for _ in range(200):
+            records.append({"report_id": report_id, "name": "DrugC", "AE": "Fatigue", "count": 1})
+            report_id += 1
+        df = pd.DataFrame(records)
+        cont = convert_binary(df, report_id_label="report_id")
+
+        res_relaxed = lasso(cont, min_events=3, C=0.5, relaxed=True)
+        res_penalized = lasso(cont, min_events=3, C=0.5, relaxed=False)
+
+        assert "L1 Coefficient" in res_relaxed.all_signals.columns
+        assert "L1 Coefficient" not in res_penalized.all_signals.columns
+
+        row_rel = res_relaxed.all_signals[
+            (res_relaxed.all_signals["Product"] == "DrugA")
+            & (res_relaxed.all_signals["Adverse Event"] == "Arrhythmia")
+        ].iloc[0]
+        row_pen = res_penalized.all_signals[
+            (res_penalized.all_signals["Product"] == "DrugA")
+            & (res_penalized.all_signals["Adverse Event"] == "Arrhythmia")
+        ].iloc[0]
+
+        # Stage 2 unpenalized refit should eliminate L1 shrinkage attenuation
+        assert row_rel["LASSO Coefficient"] >= row_pen["LASSO Coefficient"]
+        assert row_rel["aROR"] >= row_pen["aROR"]
+        np.testing.assert_allclose(row_rel["L1 Coefficient"], row_pen["LASSO Coefficient"], rtol=1e-4)
+
+    def test_covariate_confounder_adjustment(self):
+        from vigipy import convert_binary
+
+        # Confounding by indication / age:
+        # Age drives "Stroke". DrugOld is prescribed to older patients, but doesn't cause Stroke.
+        # DrugYoung is prescribed to younger patients.
+        np.random.seed(42)
+        records = []
+        n_patients = 600
+        for i in range(n_patients):
+            age = float(np.random.normal(70, 5) if i < 300 else np.random.normal(30, 5))
+            drug = "DrugOld" if i < 300 else "DrugYoung"
+            p_stroke = 1.0 / (1.0 + np.exp(-(age - 55) / 5))
+            ae = "Stroke" if np.random.rand() < p_stroke else "Headache"
+            records.append({"report_id": i, "name": drug, "AE": ae, "count": 1, "age": age})
+
+        df = pd.DataFrame(records)
+
+        # Unadjusted: DrugOld appears confounded
+        cont_unadj = convert_binary(df, report_id_label="report_id")
+        res_unadj = lasso(cont_unadj, min_events=3, C=1.0, relaxed=True)
+        row_unadj = res_unadj.all_signals[
+            (res_unadj.all_signals["Product"] == "DrugOld")
+            & (res_unadj.all_signals["Adverse Event"] == "Stroke")
+        ].iloc[0]
+
+        # Adjusted for age: age deconfounds DrugOld
+        cont_adj = convert_binary(df, report_id_label="report_id", covariate_labels=["age"])
+        res_adj = lasso(cont_adj, min_events=3, C=1.0, relaxed=True)
+        row_adj = res_adj.all_signals[
+            (res_adj.all_signals["Product"] == "DrugOld")
+            & (res_adj.all_signals["Adverse Event"] == "Stroke")
+        ].iloc[0]
+
+        # Confounder adjustment should significantly reduce DrugOld's coefficient
+        assert row_unadj["LASSO Coefficient"] > row_adj["LASSO Coefficient"]
+
+    def test_lasso_separation_stability(self):
+        from vigipy import convert_binary
+
+        records = []
+        for i in range(30):
+            records.append({"report_id": i, "name": "DrugSep", "AE": "Myocarditis", "count": 1})
+        for i in range(30, 100):
+            records.append({"report_id": i, "name": "DrugControl", "AE": "Rash", "count": 1})
+        df = pd.DataFrame(records)
+        cont = convert_binary(df, report_id_label="report_id")
+
+        # Weak ridge (C=1e4) in Stage 2 prevents infinite explosion
+        res = lasso(cont, min_events=1, relaxed=True)
+        assert_valid_result(res)
+        sep_row = res.all_signals[res.all_signals["Product"] == "DrugSep"].iloc[0]
+        assert np.isfinite(sep_row["LASSO Coefficient"])
+        assert not np.isnan(sep_row["SE"])
+        assert sep_row["SE"] > 0
+
+    def test_lasso_zero_active(self):
+        from vigipy import convert_binary
+
+        df = pd.DataFrame({
+            "report_id": [1, 2, 3, 4],
+            "name": ["DrugA", "DrugB", "DrugA", "DrugB"],
+            "AE": ["Nausea", "Nausea", "Headache", "Headache"],
+            "count": [1, 1, 1, 1],
+        })
+        cont = convert_binary(df, report_id_label="report_id")
+        res = lasso(cont, min_events=1, C=1e-6, relaxed=True)
+        assert_valid_result(res)
+        assert res.num_signals == 0
+        assert (res.all_signals["LASSO Coefficient"] == 0.0).all()
+        assert (res.all_signals["aROR"] == 1.0).all()
+        assert (res.all_signals["SE"] == 0.0).all()
+        assert (res.all_signals["p_value"] == 1.0).all()
+
+    def test_sparse_lasso_equivalence(self, sample_df):
+        from vigipy import convert_binary
+
+        dense_cont = convert_binary(sample_df, sparse=False)
+        sparse_cont = convert_binary(sample_df, sparse=True)
+
+        res_dense = lasso(dense_cont, min_events=5, relaxed=True)
+        res_sparse = lasso(sparse_cont, min_events=5, relaxed=True)
+
+        assert_valid_result(res_sparse)
+        assert res_dense.num_signals == res_sparse.num_signals
+        np.testing.assert_allclose(
+            res_dense.all_signals["LASSO Coefficient"].values,
+            res_sparse.all_signals["LASSO Coefficient"].values,
+            atol=1e-5,
+        )
+        np.testing.assert_allclose(
+            res_dense.all_signals["aROR"].values,
+            res_sparse.all_signals["aROR"].values,
+            atol=1e-5,
+        )
+
+    def test_lasso_parallel(self, binary_data):
+        from vigipy.utils.Container import DataContainer
+
+        sub = DataContainer(
+            data=binary_data.data,
+            N=binary_data.N,
+            product_features=binary_data.product_features,
+            event_outcomes=binary_data.event_outcomes.iloc[:, :4],
+            type=binary_data.type,
+        )
+        res_seq = lasso(sub, min_events=3, n_jobs=1, relaxed=True)
+        res_par = lasso(sub, min_events=3, n_jobs=2, relaxed=True)
+
+        assert_valid_result(res_par)
+        assert res_seq.num_signals == res_par.num_signals
+        np.testing.assert_allclose(
+            res_seq.all_signals["LASSO Coefficient"].values,
+            res_par.all_signals["LASSO Coefficient"].values,
+            atol=1e-5,
+        )
 
 
 # ---------------------------------------------------------------------------

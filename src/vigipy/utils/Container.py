@@ -65,6 +65,10 @@ class DataContainer:
         product_features: Binary product feature matrix, for LASSO.
         event_outcomes: Event outcome matrix, for LASSO.
         type: The conversion type used ('contingency', 'binary', 'binary_count').
+        covariates: Per-report covariate matrix (standardized continuous, drop_first categoricals).
+        feature_names: Product/drug feature column names.
+        event_names: Adverse event column names.
+        covariate_names: Covariate column names.
     """
 
     data: pd.DataFrame
@@ -73,6 +77,10 @@ class DataContainer:
     product_features: Optional[pd.DataFrame] = None
     event_outcomes: Optional[pd.DataFrame] = None
     type: str = "contingency"
+    covariates: Optional[pd.DataFrame] = None
+    feature_names: Optional[list] = None
+    event_names: Optional[list] = None
+    covariate_names: Optional[list] = None
 
 
 class Container:

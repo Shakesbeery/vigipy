@@ -210,19 +210,22 @@ def gps(
     posterior_probability = []
 
     # Posterior probability of the null hypothesis
-    qdb1 = nbinom(n=priors[0], p=priors[1] / (priors[1] + expected)).pmf(n11)
-    qdb2 = nbinom(n=priors[2], p=priors[3] / (priors[3] + expected)).pmf(n11)
+    _p_post1 = np.clip(priors[1] / (priors[1] + expected + 1e-10), 1e-10, 1.0 - 1e-10)
+    _p_post2 = np.clip(priors[3] / (priors[3] + expected + 1e-10), 1e-10, 1.0 - 1e-10)
+    qdb1 = nbinom(n=priors[0], p=_p_post1).pmf(n11)
+    qdb2 = nbinom(n=priors[2], p=_p_post2).pmf(n11)
 
-    Qn = priors[4] * qdb1 / (priors[4] * qdb1 + (1 - priors[4]) * qdb2)
+    _qn_denom = priors[4] * qdb1 + (1 - priors[4]) * qdb2
+    Qn = np.where(_qn_denom > 0, priors[4] * qdb1 / _qn_denom, priors[4])
 
-    gd1 = gdtr(relative_risk, priors[0] + n11, priors[1] + expected)
-    gd2 = gdtr(relative_risk, priors[2] + n11, priors[3] + expected)
+    gd1 = gdtr(relative_risk, priors[0] + n11, np.maximum(priors[1] + expected, 1e-10))
+    gd2 = gdtr(relative_risk, priors[2] + n11, np.maximum(priors[3] + expected, 1e-10))
     posterior_probability = Qn * gd1 + (1 - Qn) * gd2
 
     dg1 = digamma(priors[0] + n11)
-    dgterm1 = dg1 - np.log(priors[1] + expected)
+    dgterm1 = dg1 - np.log(np.maximum(priors[1] + expected, 1e-10))
     dg2 = digamma(priors[2] + n11)
-    dgterm2 = dg2 - np.log(priors[3] + expected)
+    dgterm2 = dg2 - np.log(np.maximum(priors[3] + expected, 1e-10))
     EBlog2 = (np.log(2) ** -1) * (Qn * dgterm1 + (1 - Qn) * dgterm2)
 
     # Calculation of the Lower Bound.
@@ -265,7 +268,7 @@ def gps(
                 "Count": count,
                 "Expected Count": expected,
                 "p_value": RankStat,
-                "count/expected": (count / expected),
+                "count/expected": np.where(expected > 0, count / expected, np.nan),
                 "product margin": n1j,
                 "event margin": ni1,
                 "fdr": FDR,
@@ -284,7 +287,7 @@ def gps(
                 "Count": count,
                 "Expected Count": expected,
                 "quantile": RankStat,
-                "count/expected": (count / expected),
+                "count/expected": np.where(expected > 0, count / expected, np.nan),
                 "product margin": n1j,
                 "event margin": ni1,
                 "fdr": FDR,
@@ -303,7 +306,7 @@ def gps(
                 "Count": count,
                 "Expected Count": expected,
                 "log2": RankStat,
-                "count/expected": (count / expected),
+                "count/expected": np.where(expected > 0, count / expected, np.nan),
                 "product margin": n1j,
                 "event margin": ni1,
                 "fdr": FDR,
@@ -328,19 +331,23 @@ def gps(
 
 
 def non_truncated_likelihood(p, n11, E):
-    dnb1 = nbinom(n=p[0], p=p[1] / (p[1] + E)).pmf(n11)
-    dnb2 = nbinom(n=p[2], p=p[3] / (p[3] + E)).pmf(n11)
+    p_nb1 = np.clip(p[1] / (p[1] + E + 1e-10), 1e-10, 1.0 - 1e-10)
+    p_nb2 = np.clip(p[3] / (p[3] + E + 1e-10), 1e-10, 1.0 - 1e-10)
+    dnb1 = nbinom(n=p[0], p=p_nb1).pmf(n11)
+    dnb2 = nbinom(n=p[2], p=p_nb2).pmf(n11)
     term = (p[4] * dnb1 + (1 - p[4]) * dnb2) + 1e-7
     return np.sum(-np.log(term))
 
 
 def truncated_likelihood(p, n11, E, truncate):
-    dnb1 = nbinom(n=p[0], p=p[1] / (p[1] + E)).pmf(n11)
-    dnb2 = nbinom(n=p[2], p=p[3] / (p[3] + E)).pmf(n11)
+    p_nb1 = np.clip(p[1] / (p[1] + E + 1e-10), 1e-10, 1.0 - 1e-10)
+    p_nb2 = np.clip(p[3] / (p[3] + E + 1e-10), 1e-10, 1.0 - 1e-10)
+    dnb1 = nbinom(n=p[0], p=p_nb1).pmf(n11)
+    dnb2 = nbinom(n=p[2], p=p_nb2).pmf(n11)
     term1 = p[4] * dnb1 + (1 - p[4]) * dnb2
 
-    pnb1 = nbinom(n=p[0], p=p[1] / (p[1] + E)).cdf(truncate)
-    pnb2 = nbinom(n=p[2], p=p[3] / (p[3] + E)).cdf(truncate)
+    pnb1 = nbinom(n=p[0], p=p_nb1).cdf(truncate)
+    pnb2 = nbinom(n=p[2], p=p_nb2).cdf(truncate)
     term2 = 1 - (p[4] * pnb1 + (1 - p[4]) * pnb2)
 
-    return np.sum(-np.log(term1 / term2))
+    return np.sum(-np.log(np.maximum(term1, 1e-300)) + np.log(np.maximum(term2, 1e-7)))
