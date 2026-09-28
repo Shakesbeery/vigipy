@@ -269,12 +269,14 @@ def count(data, rows, cols):
     """
     mat = data.values
     c_idx, r_idx = np.nonzero(mat.T)
+    rows_arr = np.asarray(rows)
+    cols_arr = np.asarray(cols)
     return pd.DataFrame({
         "events": mat[r_idx, c_idx],
-        "product_aes": rows.values[r_idx],
-        "count_across_brands": cols.values[c_idx],
-        "ae_name": data.columns.values[c_idx],
-        "product_name": data.index.values[r_idx],
+        "product_aes": rows_arr[r_idx],
+        "count_across_brands": cols_arr[c_idx],
+        "ae_name": np.asarray(data.columns)[c_idx],
+        "product_name": np.asarray(data.index)[r_idx],
     })[["events", "product_aes", "count_across_brands", "ae_name", "product_name"]]
 
 def _sanitize_data(df, keep_labels):

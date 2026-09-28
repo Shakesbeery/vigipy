@@ -3,8 +3,7 @@ from __future__ import annotations
 import warnings
 import numpy as np
 import pandas as pd
-from scipy.special import digamma, gdtr, gammaln
-from scipy.stats import nbinom
+from scipy.special import digamma, gdtr, gammaln, betainc
 from scipy.optimize import minimize
 
 from ..utils.Container import AnalysisResult, DataContainer
@@ -379,8 +378,8 @@ def truncated_likelihood(p, n11, E, truncate, gammaln_n11_1=None):
         pnb1 = np.exp(r1 * np.log(p_nb1))
         pnb2 = np.exp(r2 * np.log(p_nb2))
     else:
-        pnb1 = nbinom.cdf(truncate, n=r1, p=p_nb1)
-        pnb2 = nbinom.cdf(truncate, n=r2, p=p_nb2)
+        pnb1 = betainc(r1, truncate + 1, p_nb1)
+        pnb2 = betainc(r2, truncate + 1, p_nb2)
     term2 = 1.0 - (w * pnb1 + (1.0 - w) * pnb2)
 
     return np.sum(-np.log(np.maximum(term1, 1e-300)) + np.log(np.maximum(term2, 1e-7)))

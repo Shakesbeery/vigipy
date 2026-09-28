@@ -24,18 +24,37 @@ def _normalize_time_unit(unit: str) -> str:
 
 def _fit_longitudinal_slice(
     model: Callable[..., AnalysisResult],
-    sub_container: DataContainer | None,
+    data_input: pd.DataFrame | DataContainer | None,
     timestamp: pd.Timestamp,
     include_gaps: bool,
     kwargs: dict[str, Any] | None,
     store_all_signals: bool = True,
+    conversion_type: str = "base",
+    conversion_kwargs: dict[str, Any] | None = None,
 ) -> tuple[pd.Timestamp, AnalysisResult | None] | None:
-    """Worker function for executing an analysis model on a single time slice.
+    """Worker function for executing data conversion and analysis on a single time slice.
 
     Defined at module level for clean joblib multiprocessing serialization on Windows.
+    Accepts either an already-converted DataContainer or a raw slice DataFrame to parallelize
+    both conversion and model fitting across CPU cores.
     """
-    if sub_container is None:
+    if data_input is None:
         return (timestamp, None) if include_gaps else None
+
+    if isinstance(data_input, pd.DataFrame):
+        if len(data_input) == 0:
+            return (timestamp, None) if include_gaps else None
+        c_kw = conversion_kwargs or {}
+        if conversion_type == "base":
+            sub_container = convert(data_input, **c_kw)
+        elif conversion_type == "binary":
+            sub_container = convert_binary(data_input, **c_kw)
+        elif conversion_type == "multi-item":
+            sub_container = convert_multi_item(data_input, **c_kw)
+        else:
+            raise ValueError(f"Unknown conversion type: {conversion_type}")
+    else:
+        sub_container = data_input
 
     try:
         da_results = model(sub_container, **(kwargs or {}))
@@ -136,8 +155,16 @@ class LongitudinalModel:
         counts = self.date_groups[self.count_col].sum()
         is_gps = (getattr(model, "__name__", "") == "gps")
 
+        if warm_start and n_jobs != 1:
+            warnings.warn(
+                "warm_start is only supported in sequential execution (n_jobs=1). "
+                "Disabling warm_start for parallel execution.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         if n_jobs != 1:
-            # Parallel slice dispatch
+            # Parallel slice dispatch: pass subset DataFrames to workers so conversion runs in parallel
             tasks = []
             for timestamp, count in counts.items():
                 if count == 0:
@@ -152,16 +179,22 @@ class LongitudinalModel:
                     continue
 
                 subset = self.data.iloc[:idx]
-                sub_container = self._convert(subset, conversion_type, conversion_kwargs)
-                tasks.append((timestamp, sub_container, dict(kwargs)))
+                tasks.append((timestamp, subset, dict(kwargs)))
 
             from joblib import Parallel, delayed
 
             raw_results = Parallel(n_jobs=n_jobs)(
                 delayed(_fit_longitudinal_slice)(
-                    model, sub_c, ts, include_gaps, kw, store_all_signals
+                    model,
+                    sub_df,
+                    ts,
+                    include_gaps,
+                    kw,
+                    store_all_signals,
+                    conversion_type,
+                    conversion_kwargs,
                 )
-                for ts, sub_c, kw in tasks
+                for ts, sub_df, kw in tasks
             )
             self.results = [r for r in raw_results if r is not None]
         else:
@@ -250,25 +283,32 @@ class LongitudinalModel:
                 continue
 
             subset = self.data.iloc[idx_start:idx_end]
-            sub_container = self._convert(subset, conversion_type, conversion_kwargs)
-            tasks.append((timestamp, sub_container, dict(kwargs)))
+            tasks.append((timestamp, subset, dict(kwargs)))
 
         if n_jobs != 1:
             from joblib import Parallel, delayed
 
             raw_results = Parallel(n_jobs=n_jobs)(
                 delayed(_fit_longitudinal_slice)(
-                    model, sub_c, ts, include_gaps, kw, store_all_signals
+                    model,
+                    sub_df,
+                    ts,
+                    include_gaps,
+                    kw,
+                    store_all_signals,
+                    conversion_type,
+                    conversion_kwargs,
                 )
-                for ts, sub_c, kw in tasks
+                for ts, sub_df, kw in tasks
             )
             self.results = [r for r in raw_results if r is not None]
         else:
-            for ts, sub_container, kw in tasks:
-                if sub_container is None:
+            for ts, subset, kw in tasks:
+                if subset is None:
                     if include_gaps:
                         self.results.append((ts, None))
                 else:
+                    sub_container = self._convert(subset, conversion_type, conversion_kwargs)
                     self._run_model(model, sub_container, ts, include_gaps, kw, store_all_signals)
 
     def _run_model(

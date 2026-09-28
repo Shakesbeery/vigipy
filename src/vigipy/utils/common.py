@@ -70,9 +70,9 @@ def extract_contingency_data(
         n00 = n00_raw + adj
     else:
         n11 = n11_raw
-        n10 = n10_raw
-        n01 = n01_raw + DIVISION_EPSILON
-        n00 = n00_raw
+        n10 = np.where(n10_raw <= 0, DIVISION_EPSILON, n10_raw)
+        n01 = np.where(n01_raw <= 0, DIVISION_EPSILON, n01_raw)
+        n00 = np.where(n00_raw <= 0, DIVISION_EPSILON, n00_raw)
 
     return {
         "DATA": DATA,

@@ -973,3 +973,27 @@ class TestLongitudinalEnhancements:
                 assert hasattr(res, "signals")
                 assert res.num_signals >= 0
 
+    def test_longitudinal_warm_start_parallel_warning(self, sample_df):
+        import pytest
+        lm = LongitudinalModel(sample_df.copy(), "A")
+        with pytest.warns(UserWarning, match="warm_start is only supported in sequential execution"):
+            lm.run(gps, True, n_jobs=2, warm_start=True, min_events=3)
+
+    def test_gps_higher_truncation_threshold(self, converted_data):
+        """Verify GPS truncation via betainc when truncate_thres > 1."""
+        res = gps(converted_data, min_events=3, truncate=True, truncate_thres=2)
+        assert res.num_signals >= 0
+        assert "LowerBound" in res.all_signals.columns
+
+    def test_count_with_numpy_arrays(self, converted_data):
+        """Verify count() works when rows and cols are raw numpy arrays instead of Series."""
+        from vigipy.utils.data_prep import count
+        cont = converted_data.contingency
+        r_arr = np.asarray(np.sum(cont.values, axis=1))
+        c_arr = np.asarray(np.sum(cont.values, axis=0))
+        df = count(cont, r_arr, c_arr)
+        assert len(df) > 0
+        assert "events" in df.columns
+        assert "product_aes" in df.columns
+
+

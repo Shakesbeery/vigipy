@@ -64,6 +64,9 @@ def ror(
     log_LB = log_ror - z_crit * se_log_ror
     log_UB = log_ror + z_crit * se_log_ror
 
+    log_LB = np.nan_to_num(log_LB, nan=-np.inf, posinf=np.inf, neginf=-np.inf)
+    log_UB = np.nan_to_num(log_UB, nan=np.inf, posinf=np.inf, neginf=-np.inf)
+
     max_log_val = np.log(np.finfo(np.float64).max)
     min_log_val = np.log(np.finfo(np.float64).tiny)
     ci_upper = np.where(log_UB >= max_log_val, np.inf, np.exp(np.minimum(log_UB, max_log_val)))
