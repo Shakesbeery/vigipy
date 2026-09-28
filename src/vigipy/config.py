@@ -43,7 +43,7 @@ class PRRConfig:
 
     method: str = field(default="prr", init=False)
     relative_risk: float = 1
-    min_events: int = 1
+    min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
     decision_thres: float = 0.05
     ranking_statistic: FreqRankingStatistic = "p_value"
@@ -71,7 +71,7 @@ class RORConfig:
 
     method: str = field(default="ror", init=False)
     relative_risk: float = 1
-    min_events: int = 1
+    min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
     decision_thres: float = 0.05
     ranking_statistic: FreqRankingStatistic = "p_value"
@@ -98,10 +98,10 @@ class RFETConfig:
     """
 
     method: str = field(default="rfet", init=False)
-    min_events: int = 1
+    min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
     decision_thres: float = 0.05
-    mid_pval: bool = False
+    mid_pval: bool = True
     expected_method: ExpectedMethod = "mantel-haentzel"
     method_alpha: float = 1
     fdr_threshold: float = 0.05
@@ -125,9 +125,9 @@ class BCPNNConfig:
 
     method: str = field(default="bcpnn", init=False)
     relative_risk: float = 1
-    min_events: int = 1
+    min_events: int = 3
     decision_metric: DecisionMetric = "rank"
-    decision_thres: float = 0.05
+    decision_thres: float = 0.0
     ranking_statistic: BCPNNRankingStatistic = "quantile"
     MC: bool = False
     num_MC: int = 10000
@@ -158,11 +158,11 @@ class GPSConfig:
 
     method: str = field(default="gps", init=False)
     relative_risk: float = 1
-    min_events: int = 1
+    min_events: int = 3
     decision_metric: DecisionMetric = "rank"
     decision_thres: float = 0.05
     ranking_statistic: GPSRankingStatistic = "log2"
-    truncate: bool = False
+    truncate: bool = True
     truncate_thres: float = 1
     prior_init: dict | None = None
     prior_param: list | None = None

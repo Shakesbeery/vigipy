@@ -31,11 +31,11 @@ BOUNDED_METHODS = {
 def gps(
     container: DataContainer,
     relative_risk: float = 1,
-    min_events: int = 1,
+    min_events: int = 3,
     decision_metric: DecisionMetric = "rank",
     decision_thres: float = 0.05,
     ranking_statistic: GPSRankingStatistic = "log2",
-    truncate: bool = False,
+    truncate: bool = True,
     truncate_thres: float = 1,
     prior_init: dict[str, float] | None = None,
     prior_param: list[float] | None = None,
