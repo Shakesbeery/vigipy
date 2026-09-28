@@ -70,9 +70,9 @@ def extract_contingency_data(
         n00 = n00_raw + adj
     else:
         n11 = n11_raw
-        n10 = n10_raw
-        n01 = n01_raw + DIVISION_EPSILON
-        n00 = n00_raw
+        n10 = np.where(n10_raw <= 0, DIVISION_EPSILON, n10_raw)
+        n01 = np.where(n01_raw <= 0, DIVISION_EPSILON, n01_raw)
+        n00 = np.where(n00_raw <= 0, DIVISION_EPSILON, n00_raw)
 
     return {
         "DATA": DATA,
@@ -251,22 +251,27 @@ def build_freq_result(
     ranking_statistic: RankingStatistic,
     num_signals: int,
     params: dict[str, Any] | None = None,
+    ci_lower: np.ndarray | None = None,
+    ci_upper: np.ndarray | None = None,
 ) -> AnalysisResult:
     """Build the AnalysisResult for frequentist methods (PRR, ROR, RFET)."""
-    all_signals = pd.DataFrame(
-        {
-            "Product": DATA["product_name"].values,
-            "Adverse Event": DATA["ae_name"].values,
-            "Count": n11,
-            "Expected Count": expected,
-            "p_value": RankStat,
-            stat_column_name: stat_values,
-            "product margin": n1j,
-            "event margin": ni1,
-            "fdr": FDR,
-        },
-        index=np.arange(len(n11)),
-    ).sort_values(by=["p_value"])
+    cols: dict[str, Any] = {
+        "Product": DATA["product_name"].values,
+        "Adverse Event": DATA["ae_name"].values,
+        "Count": n11,
+        "Expected Count": expected,
+        "p_value": RankStat,
+        stat_column_name: stat_values,
+    }
+    if ci_lower is not None and ci_upper is not None:
+        cols["CI Lower"] = ci_lower
+        cols["CI Upper"] = ci_upper
+
+    cols["product margin"] = n1j
+    cols["event margin"] = ni1
+    cols["fdr"] = FDR
+
+    all_signals = pd.DataFrame(cols, index=np.arange(len(n11))).sort_values(by=["p_value"])
 
     if ranking_statistic == "CI":
         all_signals = all_signals.rename(

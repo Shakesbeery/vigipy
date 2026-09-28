@@ -77,15 +77,10 @@ def compute_contingency(data_frame, product_label, count_label, ae_label, margin
         fill_value=0,
     )
 
-    # Calculate empty rows/columns based on margin_threshold and remove
-    cut_rows = np.where(np.sum(data_cont, axis=1) < margin_threshold)[0]
-    drop_rows = data_cont.index[cut_rows]
-
-    cut_cols = np.where(np.sum(data_cont, axis=0) < margin_threshold)[0]
-    drop_cols = data_cont.columns[cut_cols]
-
-    data_cont = data_cont.drop(drop_rows)
-    data_cont = data_cont.drop(drop_cols, axis=1)
+    # Calculate empty rows/columns based on margin_threshold and filter efficiently
+    r_sums = np.sum(data_cont.values, axis=1)
+    c_sums = np.sum(data_cont.values, axis=0)
+    data_cont = data_cont.iloc[r_sums >= margin_threshold, c_sums >= margin_threshold]
     return data_cont
 
 
@@ -272,12 +267,17 @@ def count(data, rows, cols):
         df: A Pandas DataFrame with the count information
 
     """
-    unpivoted = data.unstack()
-    unpivoted = unpivoted[unpivoted > 0].reset_index()
-    unpivoted.columns = ["ae_name", "product_name", "events"]
-    unpivoted["product_aes"] = unpivoted["product_name"].map(rows)
-    unpivoted["count_across_brands"] = unpivoted["ae_name"].map(cols)
-    return unpivoted[["events", "product_aes", "count_across_brands", "ae_name", "product_name"]]
+    mat = data.values
+    c_idx, r_idx = np.nonzero(mat.T)
+    rows_arr = np.asarray(rows)
+    cols_arr = np.asarray(cols)
+    return pd.DataFrame({
+        "events": mat[r_idx, c_idx],
+        "product_aes": rows_arr[r_idx],
+        "count_across_brands": cols_arr[c_idx],
+        "ae_name": np.asarray(data.columns)[c_idx],
+        "product_name": np.asarray(data.index)[r_idx],
+    })[["events", "product_aes", "count_across_brands", "ae_name", "product_name"]]
 
 def _sanitize_data(df, keep_labels):
     keep = []

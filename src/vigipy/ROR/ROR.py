@@ -54,13 +54,25 @@ def ror(
 
     log_ror = np.log(d["n11"] * d["n00"] / (d["n10"] * d["n01"]))
     var_log_ror = 1.0 / d["n11"] + 1.0 / d["n10"] + 1.0 / d["n01"] + 1.0 / d["n00"]
-    pval_uni = 1 - norm.cdf(log_ror, np.log(relative_risk), np.sqrt(var_log_ror))
+    se_log_ror = np.sqrt(np.maximum(var_log_ror, 0.0))
+    pval_uni = 1 - norm.cdf(log_ror, np.log(relative_risk), se_log_ror)
     pval_uni = np.clip(pval_uni, 0, 1)
 
     FDR = compute_fdr(pval_uni, d["num_cell"], fdr_threshold)
 
-    LB = norm.ppf(0.025, log_ror, np.sqrt(var_log_ror))
-    RankStat = pval_uni if ranking_statistic == "p_value" else LB
+    z_crit = 1.959963984540054
+    log_LB = log_ror - z_crit * se_log_ror
+    log_UB = log_ror + z_crit * se_log_ror
+
+    log_LB = np.nan_to_num(log_LB, nan=-np.inf, posinf=np.inf, neginf=-np.inf)
+    log_UB = np.nan_to_num(log_UB, nan=np.inf, posinf=np.inf, neginf=-np.inf)
+
+    max_log_val = np.log(np.finfo(np.float64).max)
+    min_log_val = np.log(np.finfo(np.float64).tiny)
+    ci_upper = np.where(log_UB >= max_log_val, np.inf, np.exp(np.minimum(log_UB, max_log_val)))
+    ci_lower = np.where(log_LB <= min_log_val, 0.0, np.exp(np.maximum(log_LB, min_log_val)))
+
+    RankStat = pval_uni if ranking_statistic == "p_value" else log_LB
 
     num_signals = determine_num_signals(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, d["num_cell"]
@@ -78,4 +90,5 @@ def ror(
         d["DATA"], d.get("n11_raw", d["n11"]), d["expected"], RankStat,
         np.exp(log_ror), "ROR",
         d["n1j"], d["ni1"], FDR, ranking_statistic, num_signals, params,
+        ci_lower=ci_lower, ci_upper=ci_upper,
     )

@@ -3,8 +3,7 @@ from __future__ import annotations
 import warnings
 import numpy as np
 import pandas as pd
-from scipy.special import digamma, gdtr
-from scipy.stats import nbinom
+from scipy.special import digamma, gdtr, gammaln, betainc
 from scipy.optimize import minimize
 
 from ..utils.Container import AnalysisResult, DataContainer
@@ -13,7 +12,7 @@ from ..utils.common import compute_bayesian_metrics, determine_num_signals, buil
 from ..utils.types import DecisionMetric, GPSRankingStatistic, ExpectedMethod
 from ..utils.distribution_funcs.quantile_funcs import quantiles as _quantiles_scalar
 
-quantiles = np.vectorize(_quantiles_scalar)
+quantiles = np.vectorize(_quantiles_scalar, otypes=[np.float64])
 
 EPS = np.finfo(np.float32).eps
 BOUNDED_METHODS = {
@@ -110,6 +109,14 @@ def gps(
             "beta2": 1.838,
             "w": 0.0969,
         }
+    elif isinstance(prior_init, (list, tuple, np.ndarray)):
+        prior_init = {
+            "alpha1": float(prior_init[0]),
+            "beta1": float(prior_init[1]),
+            "alpha2": float(prior_init[2]),
+            "beta2": float(prior_init[3]),
+            "w": float(prior_init[4]),
+        }
 
     input_params = {
         "relative_risk": relative_risk,
@@ -167,10 +174,11 @@ def gps(
                 n11_c_temp.extend(list(data_cont[col]))
             n11_c = np.asarray(n11_c_temp)
 
+            gammaln_n11_1_c = gammaln(n11_c + 1.0)
             p_out = minimize(
                 non_truncated_likelihood,
                 x0=priors,
-                args=(n11_c, E_c),
+                args=(n11_c, E_c, gammaln_n11_1_c),
                 options={"maxiter": 500},
                 method=minimization_method,
                 bounds=minimization_bounds,
@@ -178,13 +186,17 @@ def gps(
             )
         elif truncate:
             trunc = truncate_thres - 1
+            n11_trunc = n11[n11 >= truncate_thres]
+            E_trunc = expected[n11 >= truncate_thres]
+            gammaln_n11_1 = gammaln(n11_trunc + 1.0)
             p_out = minimize(
                 truncated_likelihood,
                 x0=priors,
                 args=(
-                    n11[n11 >= truncate_thres],
-                    expected[n11 >= truncate_thres],
+                    n11_trunc,
+                    E_trunc,
                     trunc,
+                    gammaln_n11_1,
                 ),
                 options={"maxiter": 500},
                 method=minimization_method,
@@ -212,8 +224,12 @@ def gps(
     # Posterior probability of the null hypothesis
     _p_post1 = np.clip(priors[1] / (priors[1] + expected + 1e-10), 1e-10, 1.0 - 1e-10)
     _p_post2 = np.clip(priors[3] / (priors[3] + expected + 1e-10), 1e-10, 1.0 - 1e-10)
-    qdb1 = nbinom(n=priors[0], p=_p_post1).pmf(n11)
-    qdb2 = nbinom(n=priors[2], p=_p_post2).pmf(n11)
+    gammaln_n11_1_post = gammaln(n11 + 1.0)
+    r1, r2 = priors[0], priors[2]
+    log_qdb1 = gammaln(n11 + r1) - gammaln_n11_1_post - gammaln(r1) + r1 * np.log(_p_post1) + n11 * np.log(1.0 - _p_post1)
+    log_qdb2 = gammaln(n11 + r2) - gammaln_n11_1_post - gammaln(r2) + r2 * np.log(_p_post2) + n11 * np.log(1.0 - _p_post2)
+    qdb1 = np.exp(log_qdb1)
+    qdb2 = np.exp(log_qdb2)
 
     _qn_denom = priors[4] * qdb1 + (1 - priors[4]) * qdb2
     Qn = np.where(_qn_denom > 0, priors[4] * qdb1 / _qn_denom, priors[4])
@@ -330,24 +346,40 @@ def gps(
     )
 
 
-def non_truncated_likelihood(p, n11, E):
+def non_truncated_likelihood(p, n11, E, gammaln_n11_1=None):
+    if gammaln_n11_1 is None:
+        gammaln_n11_1 = gammaln(n11 + 1.0)
     p_nb1 = np.clip(p[1] / (p[1] + E + 1e-10), 1e-10, 1.0 - 1e-10)
     p_nb2 = np.clip(p[3] / (p[3] + E + 1e-10), 1e-10, 1.0 - 1e-10)
-    dnb1 = nbinom(n=p[0], p=p_nb1).pmf(n11)
-    dnb2 = nbinom(n=p[2], p=p_nb2).pmf(n11)
-    term = (p[4] * dnb1 + (1 - p[4]) * dnb2) + 1e-7
+
+    r1, r2, w = p[0], p[2], p[4]
+    log_dnb1 = gammaln(n11 + r1) - gammaln_n11_1 - gammaln(r1) + r1 * np.log(p_nb1) + n11 * np.log(1.0 - p_nb1)
+    log_dnb2 = gammaln(n11 + r2) - gammaln_n11_1 - gammaln(r2) + r2 * np.log(p_nb2) + n11 * np.log(1.0 - p_nb2)
+    dnb1 = np.exp(log_dnb1)
+    dnb2 = np.exp(log_dnb2)
+    term = (w * dnb1 + (1.0 - w) * dnb2) + 1e-7
     return np.sum(-np.log(term))
 
 
-def truncated_likelihood(p, n11, E, truncate):
+def truncated_likelihood(p, n11, E, truncate, gammaln_n11_1=None):
+    if gammaln_n11_1 is None:
+        gammaln_n11_1 = gammaln(n11 + 1.0)
     p_nb1 = np.clip(p[1] / (p[1] + E + 1e-10), 1e-10, 1.0 - 1e-10)
     p_nb2 = np.clip(p[3] / (p[3] + E + 1e-10), 1e-10, 1.0 - 1e-10)
-    dnb1 = nbinom(n=p[0], p=p_nb1).pmf(n11)
-    dnb2 = nbinom(n=p[2], p=p_nb2).pmf(n11)
-    term1 = p[4] * dnb1 + (1 - p[4]) * dnb2
 
-    pnb1 = nbinom(n=p[0], p=p_nb1).cdf(truncate)
-    pnb2 = nbinom(n=p[2], p=p_nb2).cdf(truncate)
-    term2 = 1 - (p[4] * pnb1 + (1 - p[4]) * pnb2)
+    r1, r2, w = p[0], p[2], p[4]
+    log_dnb1 = gammaln(n11 + r1) - gammaln_n11_1 - gammaln(r1) + r1 * np.log(p_nb1) + n11 * np.log(1.0 - p_nb1)
+    log_dnb2 = gammaln(n11 + r2) - gammaln_n11_1 - gammaln(r2) + r2 * np.log(p_nb2) + n11 * np.log(1.0 - p_nb2)
+    dnb1 = np.exp(log_dnb1)
+    dnb2 = np.exp(log_dnb2)
+    term1 = w * dnb1 + (1.0 - w) * dnb2
+
+    if truncate == 0:
+        pnb1 = np.exp(r1 * np.log(p_nb1))
+        pnb2 = np.exp(r2 * np.log(p_nb2))
+    else:
+        pnb1 = betainc(r1, truncate + 1, p_nb1)
+        pnb2 = betainc(r2, truncate + 1, p_nb2)
+    term2 = 1.0 - (w * pnb1 + (1.0 - w) * pnb2)
 
     return np.sum(-np.log(np.maximum(term1, 1e-300)) + np.log(np.maximum(term2, 1e-7)))
