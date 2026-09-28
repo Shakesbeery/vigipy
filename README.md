@@ -1,13 +1,13 @@
 # vigipy
 
 > [!IMPORTANT]
-> **Release — `vigipy` v3.2 is live!**
-> Advanced LASSO engine, sparse matrix architecture, and hardened numerical inference:
-> - **Relaxed LASSO & Inference**: Two-stage Relaxed LASSO (`relaxed=True`) for unattenuated adjusted odds ratios (aROR), SVD pseudo-inverse Fisher covariance for Wald CIs and p-values.
-> - **Covariate Adjustment**: Clinical and demographic confounder adjustment via `covariate_labels` in `convert_binary()`.
-> - **Sparse Matrix Architecture**: End-to-end CSR sparse representation (`sparse=True`) for multi-million report databases with massive memory savings.
-> - **Parallel Execution**: Multi-core parallelization across adverse events (`n_jobs`).
-> - **GPS Numerical Hardening**: Fully guarded likelihood and Bayesian posterior calculations against division-by-zero, log-of-zero, and underflow.
+> **Release — `vigipy` v3.2.1 is live!**
+> Aligned default hyperparameters with regulatory guidelines (EMA, FDA, UK MHRA) and modern statistical pharmacovigilance standards:
+> - **Standardized Threshold**: Default `min_events=3` across all disproportionality methods (`PRR`, `ROR`, `RFET`, `BCPNN`, `GPS`) to eliminate singleton and doubleton noise.
+> - **Lancaster Mid-p Correction**: Enabled by default in `RFET` (`mid_pval=True`) to eliminate discrete test conservatism.
+> - **Canonical BCPNN Rule**: Set `decision_thres=0.0` by default in `BCPNN`, directly implementing the WHO-UMC $IC_{025} > 0.0$ benchmark.
+> - **Zero-Truncated GPS**: Enabled `truncate=True` by default, properly conditioning on observed spontaneous adverse event reporting databases.
+> - **Advanced LASSO Engine**: Two-stage Relaxed LASSO (`relaxed=True`), SVD pseudo-inverse inference, sparse matrices (`sparse=True`), and clinical covariate adjustment.
 > 
 > *See the updated API documentation and examples below.*
 
