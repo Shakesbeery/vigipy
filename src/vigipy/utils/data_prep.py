@@ -78,10 +78,10 @@ def compute_contingency(data_frame, product_label, count_label, ae_label, margin
     )
 
     # Calculate empty rows/columns based on margin_threshold and remove
-    cut_rows = np.where(np.sum(data_cont, axis=1) < margin_threshold)
+    cut_rows = np.where(np.sum(data_cont, axis=1) < margin_threshold)[0]
     drop_rows = data_cont.index[cut_rows]
 
-    cut_cols = np.where(np.sum(data_cont, axis=0) < margin_threshold)
+    cut_cols = np.where(np.sum(data_cont, axis=0) < margin_threshold)[0]
     drop_cols = data_cont.columns[cut_cols]
 
     data_cont = data_cont.drop(drop_rows)
