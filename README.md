@@ -1,13 +1,13 @@
 # vigipy
 
 > [!IMPORTANT]
-> **Release — `vigipy` v3.2.1 is live!**
-> Aligned default hyperparameters with regulatory guidelines (EMA, FDA, UK MHRA) and modern statistical pharmacovigilance standards:
-> - **Standardized Threshold**: Default `min_events=3` across all disproportionality methods (`PRR`, `ROR`, `RFET`, `BCPNN`, `GPS`) to eliminate singleton and doubleton noise.
-> - **Lancaster Mid-p Correction**: Enabled by default in `RFET` (`mid_pval=True`) to eliminate discrete test conservatism.
-> - **Canonical BCPNN Rule**: Set `decision_thres=0.0` by default in `BCPNN`, directly implementing the WHO-UMC $IC_{025} > 0.0$ benchmark.
-> - **Zero-Truncated GPS**: Enabled `truncate=True` by default, properly conditioning on observed spontaneous adverse event reporting databases.
-> - **Advanced LASSO Engine**: Two-stage Relaxed LASSO (`relaxed=True`), SVD pseudo-inverse inference, sparse matrices (`sparse=True`), and clinical covariate adjustment.
+> **Release — `vigipy` v3.3 is live!**
+> High-performance longitudinal analysis engine, vectorized contingency pre-processing, and analytical Bayesian GPS pipeline:
+> - **Longitudinal Performance**: $O(\log N)$ binary search slicing, multi-core slice parallelism (`n_jobs`) with parallel worker data conversion, sequential hyperprior warm-starting (`warm_start=True`), and memory pruning (`store_all_signals=False`).
+> - **Pre-Processing Vectorization**: Vectorized column-major NumPy nonzero indexing in `count()`, delivering an end-to-end **~2x speedup** across all frequentist models (PRR, ROR, RFET, BCPNN).
+> - **Analytical GPS Likelihood**: Closed-form C evaluations using `scipy.special.gammaln` (PMF) and `betainc` (truncated CDF), yielding a **20x speedup** on disjoint longitudinal GPS runs with machine-precision numerical identity.
+> - **Confidence Intervals & Zero Guards**: Standard 95% Wald CIs for PRR and ROR with robust zero-denominator safeguards preventing NaNs on sparse boundary cells.
+> - **Aligned Regulatory Defaults**: Standard `min_events=3` across methods, Lancaster mid-p correction (`mid_pval=True`), and canonical WHO-UMC threshold (`decision_thres=0.0`).
 > 
 > *See the updated API documentation and examples below.*
 
@@ -248,12 +248,12 @@ df = pd.read_csv("AE_time_series.csv")
 # Initialize grouped by calendar year ('YE', 'QE', 'ME')
 lm = LongitudinalModel(df, time_unit="YE", count_col="count")
 
-# Run GPS cumulatively over time
-lm.run(gps, include_gaps=False, decision_metric="rank", ranking_statistic="log2")
+# Run GPS cumulatively with hyperprior warm-starting and memory pruning
+lm.run(gps, warm_start=True, store_all_signals=False)
 
-# Regroup to quarterly slices and evaluate
+# Or evaluate in parallel across CPU cores on disjoint intervals
 lm.regroup_dates("QE")
-lm.run_disjoint(gps, include_gaps=False, decision_metric="rank", ranking_statistic="log2")
+lm.run_disjoint(gps, n_jobs=-1)
 
 # Access results chronologically: (timestamp, AnalysisResult)
 for timestamp, result in lm.results:
