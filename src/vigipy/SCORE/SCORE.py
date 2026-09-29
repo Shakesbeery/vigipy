@@ -180,7 +180,7 @@ def score_da(
     })
 
     # 1. Ingestion: Extract contingency matrix C (J drugs x I AEs) and Co-occurrence S (I x I)
-    if container.type in ("binary", "binary_report", "binary_count"):
+    if container.type in ("binary", "binary_report", "binary_count", "binary_ddi"):
         X_df = container.product_features
         Y_df = container.event_outcomes
         products = list(X_df.columns)
@@ -374,6 +374,308 @@ def score_da(
     )
     signals_df = all_signals_df[sig_mask].sort_values(
         by=["fdr", "SER"], ascending=[True, False]
+    ).reset_index(drop=True)
+
+    return AnalysisResult(
+        all_signals=all_signals_df.reset_index(drop=True),
+        signals=signals_df,
+        num_signals=len(signals_df),
+        params=param_dict,
+    )
+
+
+def score_ddi(
+    container: DataContainer,
+    interaction_model: str = "multiplicative",
+    syndromic_weight: float = 0.5,
+    sparsity_param: float = 1.0,
+    fdr_threshold: float = 0.05,
+    min_events: int = 1,
+    max_iter: int = 50,
+    tol: float = 1e-4,
+    n_jobs: int = 1,
+    seed: int = 42,
+) -> AnalysisResult:
+    """Perform SCORE-DDI (Syndromic Cellwise Outlier & Residual Estimation for Drug-Drug Interactions).
+
+    Evaluates supra-additive or supra-multiplicative adverse event risk for co-prescribed
+    drug pairs, regularized by a patient-level syndromic adverse event Graph Laplacian.
+
+    Parameters:
+        container: A DataContainer prepared via `convert_ddi(...)` or containing pair_mapping.
+        interaction_model: Null model for expected co-reporting under no interaction.
+            Options: 'multiplicative' (default, independent relative risk compounding)
+            or 'additive' (additive excess risk difference).
+        syndromic_weight: Graph Laplacian coupling penalty (lambda_2 >= 0). Encourages
+            borrowing of strength across clinically related symptoms in a syndrome.
+        sparsity_param: L1 sparsity penalty (lambda_1 >= 0) on the interaction excess rate.
+        fdr_threshold: Target False Discovery Rate (q-value) cutoff for interaction signal detection.
+        min_events: Minimum observed co-occurrence count required to qualify as an interaction signal.
+        max_iter: Maximum number of FISTA iterations per drug pair.
+        tol: Convergence tolerance for FISTA.
+        n_jobs: Number of CPU worker processes (-1 for all available cores).
+        seed: Random seed for reproducibility.
+
+    Returns:
+        AnalysisResult containing all drug pairs x adverse event combinations, detected
+        interaction signals, interaction archetypes (EMERGENT, POTENTIATED, TWO_HIT),
+        and model parameters.
+    """
+    if interaction_model not in ("multiplicative", "additive"):
+        raise ValueError(
+            f"Invalid interaction_model '{interaction_model}'. Must be 'multiplicative' or 'additive'."
+        )
+
+    param_dict = build_params("score_ddi", {
+        "interaction_model": interaction_model,
+        "syndromic_weight": syndromic_weight,
+        "sparsity_param": sparsity_param,
+        "fdr_threshold": fdr_threshold,
+        "min_events": min_events,
+        "max_iter": max_iter,
+        "tol": tol,
+        "n_jobs": n_jobs,
+        "seed": seed,
+    })
+
+    # 1. Extract contingency matrix & pairs
+    if container.contingency is not None:
+        cont = container.contingency
+    elif container.type in ("binary", "binary_report", "binary_count", "binary_ddi"):
+        X_df = container.product_features
+        Y_df = container.event_outcomes
+        if hasattr(X_df, "sparse") or issparse(X_df):
+            X_mat = X_df.sparse.to_coo().tocsr() if hasattr(X_df, "sparse") else X_df.tocsr()
+        else:
+            X_mat = np.ascontiguousarray(X_df.values, dtype=np.float64)
+        if hasattr(Y_df, "sparse") or issparse(Y_df):
+            Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
+        else:
+            Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
+        C_arr = (X_mat.T @ Y_mat).toarray() if issparse(X_mat) or issparse(Y_mat) else X_mat.T @ Y_mat
+        cont = pd.DataFrame(C_arr, index=list(X_df.columns), columns=list(Y_df.columns))
+    else:
+        raise ValueError(f"Unsupported container type '{container.type}' for score_ddi.")
+
+    pair_mapping = getattr(container, "pair_mapping", None)
+    if not pair_mapping:
+        pair_mapping = {}
+        for name in cont.index:
+            if " + " in str(name):
+                parts = str(name).split(" + ")
+                if len(parts) == 2 and parts[0] in cont.index and parts[1] in cont.index:
+                    pair_mapping[name] = (parts[0], parts[1])
+
+    if not pair_mapping:
+        raise ValueError(
+            "No drug pairs found in container. Use convert_ddi() to prepare interaction data."
+        )
+
+    events = list(cont.columns)
+    n_events = len(events)
+    all_rows = list(cont.index)
+    C_all = np.ascontiguousarray(cont.values, dtype=np.float64)
+    N_tot = float(np.sum(C_all))
+
+    if N_tot <= 0:
+        raise ValueError("Contingency table contains no counts.")
+
+    C_ae = np.sum(C_all, axis=0)
+
+    # 2. Build Syndromic Graph Laplacian & Clusters
+    if container.event_outcomes is not None:
+        Y_df = container.event_outcomes
+        if hasattr(Y_df, "sparse") or issparse(Y_df):
+            Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
+        else:
+            Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
+        S_cooccur = (Y_mat.T @ Y_mat).toarray() if issparse(Y_mat) else Y_mat.T @ Y_mat
+    else:
+        S_cooccur = C_all.T @ C_all
+
+    L_ae, clusters = _build_syndromic_laplacian(S_cooccur)
+
+    # Spectral norm via power iteration for exact Lipschitz bound
+    rng = np.random.default_rng(seed)
+    v_init = rng.standard_normal(n_events)
+    v_norm = np.linalg.norm(v_init)
+    if v_norm > 0:
+        v_pi = v_init / v_norm
+        for _ in range(10):
+            v_next = L_ae @ v_pi
+            vn = np.linalg.norm(v_next)
+            if vn > 0:
+                v_pi = v_next / vn
+        lambda_max = float(v_pi.T @ (L_ae @ v_pi))
+    else:
+        lambda_max = 2.0
+    L_lip = 1.0 + lambda_max * float(syndromic_weight)
+
+    # 3. Compute baseline marginals across single drugs (to avoid double-counting pair rows)
+    single_drugs = [d for d in cont.index if d not in pair_mapping]
+    if len(single_drugs) > 0:
+        single_indices = [cont.index.get_loc(d) for d in single_drugs]
+        C_singles = C_all[single_indices, :]
+        N_tot = float(np.sum(C_singles))
+        C_ae = np.sum(C_singles, axis=0)
+    else:
+        N_tot = float(np.sum(C_all))
+        C_ae = np.sum(C_all, axis=0)
+
+    if N_tot <= 0:
+        raise ValueError("Contingency table contains no counts.")
+
+    single_counts = {d: C_all[cont.index.get_loc(d), :] for d in single_drugs}
+
+    # 4. Compute no-interaction baselines & targets for all candidate pairs
+    pair_names = list(pair_mapping.keys())
+    n_pairs = len(pair_names)
+    C_pairs = np.zeros((n_pairs, n_events), dtype=np.float64)
+    Lambda_null = np.zeros((n_pairs, n_events), dtype=np.float64)
+    Y_target_pairs = np.zeros((n_pairs, n_events), dtype=np.float64)
+    archetypes = []
+
+    for p_idx, p_name in enumerate(pair_names):
+        d1, d2 = pair_mapping[p_name]
+        c_p = C_all[cont.index.get_loc(p_name), :]
+        C_pairs[p_idx, :] = c_p
+        r_p = np.sum(c_p)
+        e_p = (r_p * C_ae) / N_tot
+
+        # Solo counts of Drug 1 and Drug 2 (subtracting the co-prescription counts c_p)
+        c_1_raw = single_counts.get(d1, c_p)
+        c_2_raw = single_counts.get(d2, c_p)
+        c_1_solo = np.maximum(0.0, c_1_raw - c_p)
+        c_2_solo = np.maximum(0.0, c_2_raw - c_p)
+
+        r_1_solo = np.sum(c_1_solo)
+        r_2_solo = np.sum(c_2_solo)
+
+        e_1_solo = (r_1_solo * C_ae) / N_tot if r_1_solo > 0 else np.full(n_events, 1e-4)
+        e_2_solo = (r_2_solo * C_ae) / N_tot if r_2_solo > 0 else np.full(n_events, 1e-4)
+
+        rr_1 = np.where(e_1_solo > 0, c_1_solo / np.maximum(e_1_solo, 1e-6), 1.0)
+        rr_2 = np.where(e_2_solo > 0, c_2_solo / np.maximum(e_2_solo, 1e-6), 1.0)
+
+        rr_1_pos = np.maximum(1.0, rr_1)
+        rr_2_pos = np.maximum(1.0, rr_2)
+
+        if interaction_model == "multiplicative":
+            rr_null = rr_1_pos * rr_2_pos
+        else:
+            rr_null = np.maximum(1.0, rr_1_pos + rr_2_pos - 1.0)
+
+        lam_null = np.maximum(1e-4, e_p * rr_null)
+        Lambda_null[p_idx, :] = lam_null
+        Y_target_pairs[p_idx, :] = c_p - lam_null
+
+        # Classify interaction archetype per event
+        for i in range(n_events):
+            sig1 = (rr_1[i] >= 2.0 and c_1_solo[i] >= min_events)
+            sig2 = (rr_2[i] >= 2.0 and c_2_solo[i] >= min_events)
+            if not sig1 and not sig2:
+                archetypes.append("EMERGENT")
+            elif sig1 != sig2:
+                archetypes.append("POTENTIATED")
+            else:
+                archetypes.append("TWO_HIT")
+
+    # 5. Solve Box-Constrained FISTA for each pair
+    if n_jobs != 1 and n_pairs > 1:
+        from joblib import Parallel, delayed
+
+        theta_rows = Parallel(n_jobs=n_jobs)(
+            delayed(_solve_fista_single_drug)(
+                y_target=Y_target_pairs[p_idx, :],
+                c_observed=C_pairs[p_idx, :],
+                L_ae=L_ae,
+                lambda_1=sparsity_param,
+                lambda_2=syndromic_weight,
+                L_lip=L_lip,
+                max_iter=max_iter,
+                tol=tol,
+            )
+            for p_idx in range(n_pairs)
+        )
+        Theta_est = np.array(theta_rows)
+    else:
+        Theta_est = np.zeros_like(C_pairs)
+        for p_idx in range(n_pairs):
+            Theta_est[p_idx, :] = _solve_fista_single_drug(
+                y_target=Y_target_pairs[p_idx, :],
+                c_observed=C_pairs[p_idx, :],
+                L_ae=L_ae,
+                lambda_1=sparsity_param,
+                lambda_2=syndromic_weight,
+                L_lip=L_lip,
+                max_iter=max_iter,
+                tol=tol,
+            )
+
+    # 6. Statistical Inference & Output Formatting
+    counts_flat = C_pairs.flatten()
+    lam_flat = Lambda_null.flatten()
+    theta_flat = Theta_est.flatten()
+
+    se_flat = np.sqrt(np.maximum(lam_flat, 1e-6))
+    z_scores = np.where(theta_flat > 0, theta_flat / se_flat, 0.0)
+    p_values = np.where(z_scores > 0, 1.0 - stats.norm.cdf(z_scores), 1.0)
+    p_values = np.clip(p_values, 0.0, 1.0)
+
+    # 95% Wald CI for SER
+    z_crit = 1.959963984540054
+    ser_lower = np.maximum(0.0, theta_flat - z_crit * se_flat)
+    ser_upper = theta_flat + z_crit * se_flat
+
+    # Benjamini-Hochberg FDR
+    total_comparisons = len(p_values)
+    sort_idx = np.argsort(p_values)
+    sorted_p = p_values[sort_idx]
+    ranks = np.arange(1, total_comparisons + 1)
+    adj_p = np.minimum(1.0, sorted_p * total_comparisons / ranks)
+    adj_p = np.minimum.accumulate(adj_p[::-1])[::-1]
+    q_values = np.empty_like(adj_p)
+    q_values[sort_idx] = adj_p
+
+    ddi_ratio = np.where(lam_flat > 0, counts_flat / np.maximum(lam_flat, 1e-6), 1.0)
+
+    p_indices, e_indices = np.unravel_index(np.arange(total_comparisons), (n_pairs, n_events))
+    p_names = [pair_names[p] for p in p_indices]
+    drug1_names = [pair_mapping[pair_names[p]][0] for p in p_indices]
+    drug2_names = [pair_mapping[pair_names[p]][1] for p in p_indices]
+    event_names = [events[e] for e in e_indices]
+    clusters_assigned = [int(clusters[e]) for e in e_indices]
+
+    all_signals_df = pd.DataFrame({
+        "Drug_1": drug1_names,
+        "Drug_2": drug2_names,
+        "Product": p_names,
+        "Adverse Event": event_names,
+        "Count": counts_flat.astype(int),
+        "Expected_Null": np.round(lam_flat, 2),
+        "Expected": np.round(lam_flat, 2),  # Compatibility alias
+        "SER_Interaction": np.round(theta_flat, 4),
+        "SER": np.round(theta_flat, 4),  # Compatibility alias
+        "SER Lower": np.round(ser_lower, 4),
+        "SER Upper": np.round(ser_upper, 4),
+        "DDI_Ratio": np.round(ddi_ratio, 3),
+        "SRR": np.round(ddi_ratio, 3),  # Compatibility alias
+        "SE": np.round(se_flat, 3),
+        "z_score": np.round(z_scores, 3),
+        "p_value": p_values,
+        "fdr": q_values,
+        "p_adj": q_values,  # Compatibility alias
+        "Interaction_Archetype": archetypes,
+        "Syndrome_Cluster": clusters_assigned,
+    })
+
+    sig_mask = (
+        (all_signals_df["Count"] >= min_events)
+        & (all_signals_df["SER_Interaction"] > 0.0)
+        & (all_signals_df["fdr"] <= fdr_threshold)
+    )
+    signals_df = all_signals_df[sig_mask].sort_values(
+        by=["fdr", "SER_Interaction"], ascending=[True, False]
     ).reset_index(drop=True)
 
     return AnalysisResult(

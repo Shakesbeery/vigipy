@@ -1,5 +1,6 @@
 from itertools import chain, combinations
 from collections import Counter, defaultdict
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -253,6 +254,163 @@ def convert_multi_item(df, product_label=None, ae_label="AE", count_label="count
         data=new_df[["ae_name", "product_name", "count_across_brands", "product_aes", "events"]].drop_duplicates(),
         N=new_df["events"].sum(),
         contingency=compute_contingency(new_df, "product_name", "count", "ae_name", min_threshold),
+    )
+
+
+def convert_ddi(
+    data: pd.DataFrame,
+    product_label: str = "name",
+    ae_label: str = "AE",
+    report_id_label: str = "report_id",
+    min_co_reports: int = 3,
+    include_singles: bool = True,
+    target_drugs: Optional[Union[list[str], set[str]]] = None,
+    pair_delimiter: str = " + ",
+    sparse: bool = True,
+    covariate_labels: Optional[list[str]] = None,
+) -> DataContainer:
+    """Convert case-level report data into a Drug-Drug Interaction (DDI) DataContainer.
+
+    Identifies co-prescribed drug pairs meeting a co-reporting threshold and generates
+    interaction columns alongside single-drug features. Produces a full DataContainer
+    compatible with all vigipy disproportionality methods (PRR, ROR, GPS, LASSO, SCORE-DA,
+    and SCORE-DDI).
+
+    Parameters:
+        data: A DataFrame consisting of report-level product and adverse event occurrences.
+        product_label: Column containing product/drug names. Defaults to "name".
+        ae_label: Column containing adverse event terms. Defaults to "AE".
+        report_id_label: Column containing individual report / patient identifiers. Required
+            to determine true patient-level co-exposure. Defaults to "report_id".
+        min_co_reports: Minimum number of distinct reports where Drug A and Drug B must
+            appear together to be included as a candidate interaction pair. Defaults to 3.
+        include_singles: Whether to include single-drug main effect features alongside the
+            interaction pairs. True is strongly recommended so models can condition on
+            individual drug baselines. Defaults to True.
+        target_drugs: Optional list or set of drug names to focus screening. If specified,
+            only pairs containing at least one target drug are retained. Defaults to None.
+        pair_delimiter: String delimiter used to join drug names in pairs. Defaults to " + ".
+        sparse: If True, uses memory-efficient scipy.sparse CSR representation. Defaults to True.
+        covariate_labels: Optional list of per-report covariate column names (e.g. ['age', 'sex']).
+
+    Returns:
+        DataContainer: Fully initialized container with product_features, event_outcomes,
+            contingency, data, and pair_mapping.
+    """
+    if report_id_label not in data.columns:
+        raise ValueError(
+            f"report_id_label '{report_id_label}' not found in data columns. "
+            "DDI conversion requires a report identifier to model patient-level co-prescription."
+        )
+    if product_label not in data.columns:
+        raise ValueError(f"product_label '{product_label}' not found in data columns.")
+    if ae_label not in data.columns:
+        raise ValueError(f"ae_label '{ae_label}' not found in data columns.")
+    if covariate_labels is not None and not all(c in data.columns for c in covariate_labels):
+        missing = [c for c in covariate_labels if c not in data.columns]
+        raise ValueError(f"covariate_labels {missing} not found in data columns.")
+
+    keep_cols = [report_id_label, product_label, ae_label]
+    if covariate_labels:
+        keep_cols.extend(covariate_labels)
+    data_clean = _sanitize_data(data, keep_cols).dropna(subset=[report_id_label, product_label, ae_label])
+    data_clean[product_label] = data_clean[product_label].astype(str).str.strip()
+    data_clean[ae_label] = data_clean[ae_label].astype(str).str.strip()
+
+    prod_df = _build_sparse_crosstab(data_clean, report_id_label, product_label)
+    event_df = _build_sparse_crosstab(data_clean, report_id_label, ae_label)
+    common_idx = prod_df.index.intersection(event_df.index)
+    prod_df = prod_df.loc[common_idx]
+    event_df = event_df.loc[common_idx]
+
+    X_single_csr = prod_df.sparse.to_coo().tocsr()
+    single_drugs = list(prod_df.columns)
+
+    # Co-occurrence across reports: M_co = X.T @ X
+    M_co = (X_single_csr.T @ X_single_csr).tocoo()
+    target_set = set(target_drugs) if target_drugs is not None else None
+
+    pair_list = []
+    for j, k, count_val in zip(M_co.row, M_co.col, M_co.data):
+        if j < k and count_val >= min_co_reports:
+            d1, d2 = single_drugs[j], single_drugs[k]
+            if target_set is not None and (d1 not in target_set and d2 not in target_set):
+                continue
+            pair_list.append((j, k, d1, d2, int(count_val)))
+
+    if not pair_list:
+        msg = f"No drug pairs met the threshold of min_co_reports={min_co_reports}."
+        if target_drugs:
+            msg += f" (target_drugs={target_drugs})"
+        raise ValueError(msg)
+
+    # Sort pairs by co-occurrence count descending
+    pair_list.sort(key=lambda x: x[4], reverse=True)
+
+    pair_names = []
+    pair_cols = []
+    pair_mapping = {}
+
+    for j, k, d1, d2, _ in pair_list:
+        pname = f"{d1}{pair_delimiter}{d2}"
+        pair_names.append(pname)
+        pair_mapping[pname] = (d1, d2)
+        # Sparse column elementwise product
+        inter_col = X_single_csr[:, j].multiply(X_single_csr[:, k])
+        pair_cols.append(inter_col)
+
+    X_pairs_csr = sp.hstack(pair_cols, format="csr")
+
+    if include_singles:
+        X_all_csr = sp.hstack([X_single_csr, X_pairs_csr], format="csr")
+        all_feature_names = single_drugs + pair_names
+    else:
+        X_all_csr = X_pairs_csr
+        all_feature_names = pair_names
+
+    if sparse:
+        full_prod_df = pd.DataFrame.sparse.from_spmatrix(
+            X_all_csr, index=common_idx, columns=all_feature_names
+        ).astype(pd.SparseDtype(float, 0.0))
+        final_event_df = event_df
+    else:
+        full_prod_df = pd.DataFrame(
+            X_all_csr.toarray(), index=common_idx, columns=all_feature_names
+        )
+        final_event_df = pd.DataFrame(
+            event_df.sparse.to_coo().toarray(),
+            index=common_idx,
+            columns=list(event_df.columns),
+        )
+
+    Y_csr = event_df.sparse.to_coo().tocsr()
+    C_mat = (X_all_csr.T @ Y_csr).toarray()
+    contingency_df = pd.DataFrame(
+        C_mat, index=all_feature_names, columns=list(event_df.columns)
+    )
+    r_sums = np.sum(C_mat, axis=1)
+    c_sums = np.sum(C_mat, axis=0)
+    data_df = count(contingency_df, r_sums, c_sums)
+
+    covariates = None
+    covariate_names = None
+    if covariate_labels:
+        covariates, covariate_names = _extract_covariates(
+            data_clean, report_id_label, covariate_labels, common_idx
+        )
+
+    return DataContainer(
+        data=data_df,
+        N=int(np.sum(C_mat)),
+        contingency=contingency_df,
+        product_features=full_prod_df,
+        event_outcomes=final_event_df,
+        type="binary_ddi",
+        covariates=covariates,
+        feature_names=all_feature_names,
+        event_names=list(event_df.columns),
+        covariate_names=covariate_names,
+        pair_mapping=pair_mapping,
     )
 
 

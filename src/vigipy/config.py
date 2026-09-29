@@ -250,6 +250,43 @@ class SCOREConfig:
     seed: int = 42
 
 
-MethodConfig = Union[PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, LASSOConfig, SCOREConfig]
+@dataclass(frozen=True)
+class SCOREDDIConfig:
+    """Configuration for SCORE-DDI (Drug-Drug & Multi-Drug Interaction Discovery).
+
+    Parameters:
+        interaction_model: Null model for expected count under no interaction ('multiplicative' or 'additive').
+        syndromic_weight: Graph Laplacian coupling penalty (lambda_2 >= 0) across adverse events.
+        sparsity_param: L1 sparsity penalty (lambda_1 >= 0) on the synergistic excess rate.
+        fdr_threshold: Target False Discovery Rate (q-value) cutoff for interaction signal detection.
+        min_events: Minimum observed co-occurrence count required to qualify as an interaction signal.
+        max_iter: Maximum number of FISTA iterations per drug pair.
+        tol: Convergence tolerance for FISTA.
+        n_jobs: Number of CPU worker processes (-1 for all available cores).
+        seed: Random seed for reproducibility.
+    """
+
+    method: str = field(default="score_ddi", init=False)
+    interaction_model: str = "multiplicative"
+    syndromic_weight: float = 0.5
+    sparsity_param: float = 1.0
+    fdr_threshold: float = 0.05
+    min_events: int = 1
+    max_iter: int = 50
+    tol: float = 1e-4
+    n_jobs: int = 1
+    seed: int = 42
+
+
+MethodConfig = Union[
+    PRRConfig,
+    RORConfig,
+    RFETConfig,
+    BCPNNConfig,
+    GPSConfig,
+    LASSOConfig,
+    SCOREConfig,
+    SCOREDDIConfig,
+]
 
 

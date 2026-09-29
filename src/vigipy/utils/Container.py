@@ -81,6 +81,7 @@ class DataContainer:
     feature_names: Optional[list] = None
     event_names: Optional[list] = None
     covariate_names: Optional[list] = None
+    pair_mapping: Optional[dict[str, tuple[str, str]]] = None
 
 
 class Container:
