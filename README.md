@@ -1,13 +1,12 @@
 # vigipy
 
 > [!IMPORTANT]
-> **Release — `vigipy` v3.3 is live!**
-> High-performance longitudinal analysis engine, vectorized contingency pre-processing, and analytical Bayesian GPS pipeline:
-> - **Longitudinal Performance**: $O(\log N)$ binary search slicing, multi-core slice parallelism (`n_jobs`) with parallel worker data conversion, sequential hyperprior warm-starting (`warm_start=True`), and memory pruning (`store_all_signals=False`).
-> - **Pre-Processing Vectorization**: Vectorized column-major NumPy nonzero indexing in `count()`, delivering an end-to-end **~2x speedup** across all frequentist models (PRR, ROR, RFET, BCPNN).
-> - **Analytical GPS Likelihood**: Closed-form C evaluations using `scipy.special.gammaln` (PMF) and `betainc` (truncated CDF), yielding a **20x speedup** on disjoint longitudinal GPS runs with machine-precision numerical identity.
-> - **Confidence Intervals & Zero Guards**: Standard 95% Wald CIs for PRR and ROR with robust zero-denominator safeguards preventing NaNs on sparse boundary cells.
-> - **Aligned Regulatory Defaults**: Standard `min_events=3` across methods, Lancaster mid-p correction (`mid_pval=True`), and canonical WHO-UMC threshold (`decision_thres=0.0`).
+> **Release — `vigipy` v3.3.1 is live!**
+> Cross-method consensus signal detection engine (`consensus_analysis`) and concordance analytics:
+> - **Cross-Method Consensus Engine**: Synthesize findings across PRR, ROR, RFET, BCPNN, GPS, and LASSO in a single unified call with per-signal alert vote tallying, normalized consensus scoring, and categorical agreement tiers (`Unanimous`, `Strong`, `Moderate`, `Weak`, `Isolated`).
+> - **Method Concordance Analytics**: Inter-method agreement matrices (pairwise Jaccard similarity, Cohen's Kappa concordance, Spearman rank correlation, and alert overlap) and $2 \times 2$ alert contingency matrices.
+> - **Signal Drill-Down & Reporting**: Deep inspection tool (`inspect_signal()`) across all methods and multi-sheet Excel (`.xlsx`) / CSV export.
+> - **Longitudinal & Pipeline Performance**: Multi-core slice parallelism, $O(\log N)$ binary search slicing, hyperprior warm-starting, and closed-form analytical GPS likelihoods from v3.3.
 > 
 > *See the updated API documentation and examples below.*
 
