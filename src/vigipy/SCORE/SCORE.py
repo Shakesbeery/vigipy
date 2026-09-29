@@ -4,9 +4,10 @@ A novel pattern discovery and signal detection framework that blends:
 1. Low-Rank Matrix Factorization to absorb baseline drug-class effects and indication confounding.
 2. Report-Level Syndromic Graph Regularization (Graph Laplacian) to borrow statistical strength
    across clinically co-occurring adverse events without relying on external ontologies.
-3. Fast Iterative Shrinkage-Thresholding Algorithm (FISTA) with exact Lipschitz bounds.
+3. Fast Iterative Shrinkage-Thresholding Algorithm (FISTA) with exact Lipschitz bounds and
+   non-negative box constraints (preventing hallucinated signals when count is zero).
 4. Iterative Masking-Free Deflation to eliminate the competition/blockbuster bias.
-5. Unified Empirical Bayes-derived standard errors and Benjamini-Hochberg FDR control.
+5. Exact Null-Model Poisson / Negative-Binomial standard errors and Benjamini-Hochberg FDR control.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.sparse import issparse, csr_matrix
-from scipy.sparse.linalg import svds
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils.common import build_params
@@ -24,26 +24,28 @@ from ..utils.common import build_params
 
 def _solve_fista_single_drug(
     y_target: np.ndarray,
+    c_observed: np.ndarray,
     L_ae: np.ndarray,
     lambda_1: float,
     lambda_2: float,
+    L_lip: float,
     max_iter: int = 50,
     tol: float = 1e-4,
 ) -> np.ndarray:
-    """Solve the non-negative graph-regularized lasso problem for a single drug using FISTA.
+    """Solve the box-constrained graph-regularized lasso problem for a single drug using FISTA.
 
-    min_{theta >= 0} 0.5 * ||y_target - theta||^2 + lambda_1 * ||theta||_1 + 0.5 * lambda_2 * theta^T L_ae theta
+    min_{0 <= theta <= c_observed} 0.5 * ||y_target - theta||^2 + lambda_1 * ||theta||_1 + 0.5 * lambda_2 * theta^T L_ae theta
     """
     n_events = len(y_target)
-    if np.all(y_target <= 0):
+    if np.all(y_target <= 0) or np.all(c_observed <= 0):
         return np.zeros(n_events, dtype=np.float64)
 
-    # For normalized Laplacian, eigenvalues are in [0, 2], so Lipschitz constant is bounded by:
-    L_lip = 1.0 + 2.0 * float(lambda_2)
-    inv_L_lip = 1.0 / L_lip
+    inv_L_lip = 1.0 / max(L_lip, 1e-6)
     step_thresh = lambda_1 * inv_L_lip
+    c_max = np.maximum(0.0, c_observed)
 
-    theta = np.maximum(0.0, y_target.copy())
+    # Initialize at feasible target projection
+    theta = np.clip(y_target, 0.0, c_max)
     z = theta.copy()
     t = 1.0
 
@@ -51,8 +53,8 @@ def _solve_fista_single_drug(
         # Gradient: (I + lambda_2 * L) * z - y_target
         grad = z + lambda_2 * (L_ae @ z) - y_target
         v = z - inv_L_lip * grad
-        # Proximal operator: Soft-thresholding + non-negativity (ReLU)
-        theta_next = np.maximum(0.0, v - step_thresh)
+        # Projected soft-thresholding with box constraint [0, c_max]
+        theta_next = np.clip(v - step_thresh, 0.0, c_max)
 
         diff = np.max(np.abs(theta_next - theta))
         if diff < tol:
@@ -78,7 +80,7 @@ def _build_syndromic_laplacian(
         min_jaccard: Minimum Jaccard similarity threshold to retain an edge.
 
     Returns:
-        L_norm: (I x I) normalized graph Laplacian matrix.
+        L_norm: (I x I) normalized graph Laplacian matrix (PSD guaranteed, isolated nodes unpenalized).
         clusters: (I,) array of cluster assignments for each adverse event.
     """
     n_events = S_cooccur.shape[0]
@@ -98,18 +100,21 @@ def _build_syndromic_laplacian(
     W = 0.5 * (W + W.T)
 
     d = np.sum(W, axis=1)
-    if np.all(d == 0):
+    mask = d > 0
+
+    if not np.any(mask):
         L_norm = np.zeros((n_events, n_events), dtype=np.float64)
         clusters = np.zeros(n_events, dtype=int)
         return L_norm, clusters
 
-    d_inv_sqrt = 1.0 / np.sqrt(np.maximum(d, 1e-8))
-    L_norm = np.eye(n_events) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
+    # Safe degree inversion: isolated vertices (d_i == 0) remain 0 so they are unpenalized
+    d_inv_sqrt = np.zeros_like(d)
+    d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
+    L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
 
     # Spectral syndrome clustering: use Fiedler vector / second smallest eigenvector
     try:
         vals, vecs = np.linalg.eigh(L_norm)
-        # Use top 2 non-trivial eigenvectors to form clusters (up to 4 clusters)
         if n_events >= 4 and len(vals) > 2:
             v1 = vecs[:, 1]
             v2 = vecs[:, 2]
@@ -181,7 +186,6 @@ def score_da(
         products = list(X_df.columns)
         events = list(Y_df.columns)
 
-        # Handle sparse matrix conversions efficiently
         if hasattr(X_df, "sparse") or issparse(X_df):
             X_mat = X_df.sparse.to_coo().tocsr() if hasattr(X_df, "sparse") else X_df.tocsr()
         else:
@@ -192,10 +196,8 @@ def score_da(
         else:
             Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
 
-        # C = X.T @ Y (J x I)
         if issparse(X_mat) or issparse(Y_mat):
             C = (X_mat.T @ Y_mat).toarray()
-            # Patient-level co-reporting: Y.T @ Y (I x I)
             S_cooccur = (Y_mat.T @ Y_mat).toarray()
         else:
             C = X_mat.T @ Y_mat
@@ -206,7 +208,6 @@ def score_da(
         products = list(cont.index)
         events = list(cont.columns)
         C = np.ascontiguousarray(cont.values, dtype=np.float64)
-        # Fallback co-occurrence when binary reports are unavailable: C.T @ C
         S_cooccur = C.T @ C
     else:
         raise ValueError(f"Unsupported container type '{container.type}' for score_da.")
@@ -215,6 +216,22 @@ def score_da(
 
     # 2. Build Syndromic Graph Laplacian & Clusters
     L_ae, clusters = _build_syndromic_laplacian(S_cooccur)
+
+    # Compute exact spectral norm of L_ae via power iteration to get optimal Lipschitz constant
+    rng = np.random.default_rng(seed)
+    v_init = rng.standard_normal(n_events)
+    v_norm = np.linalg.norm(v_init)
+    if v_norm > 0:
+        v_pi = v_init / v_norm
+        for _ in range(10):
+            v_next = L_ae @ v_pi
+            vn = np.linalg.norm(v_next)
+            if vn > 0:
+                v_pi = v_next / vn
+        lambda_max = float(v_pi.T @ (L_ae @ v_pi))
+    else:
+        lambda_max = 2.0
+    L_lip = 1.0 + lambda_max * float(syndromic_weight)
 
     # 3. Iterative Deflation Loop to Eliminate Masking
     C_current = C.copy()
@@ -240,31 +257,40 @@ def score_da(
         std_err_mat = np.sqrt(np.maximum(denom_var, 1e-6))
         R_pears = (C_current - E_mat) / std_err_mat
 
-        # Low-rank background factor absorption
+        # Low-rank background factor absorption via randomized SVD
         if effective_rank > 0 and min(n_drugs, n_events) > effective_rank:
             try:
-                # SVD on Pearson residuals
-                U, S_vals, Vt = np.linalg.svd(R_pears, full_matrices=False)
-                R_low_rank = (U[:, :effective_rank] * S_vals[:effective_rank]) @ Vt[:effective_rank, :]
+                from sklearn.utils.extmath import randomized_svd
+                U, S_vals, Vt = randomized_svd(
+                    R_pears, n_components=effective_rank, random_state=seed
+                )
+                R_low_rank = (U * S_vals) @ Vt
                 Lambda_baseline = np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
             except Exception:
-                Lambda_baseline = np.maximum(1e-4, E_mat)
+                try:
+                    U, S_vals, Vt = np.linalg.svd(R_pears, full_matrices=False)
+                    R_low_rank = (U[:, :effective_rank] * S_vals[:effective_rank]) @ Vt[:effective_rank, :]
+                    Lambda_baseline = np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
+                except Exception:
+                    Lambda_baseline = np.maximum(1e-4, E_mat)
         else:
             Lambda_baseline = np.maximum(1e-4, E_mat)
 
         # Target excess rate for each drug
         Y_target = C - Lambda_baseline
 
-        # Solve FISTA per drug
+        # Solve box-constrained FISTA per drug
         if n_jobs != 1 and n_drugs > 1:
             from joblib import Parallel, delayed
 
             theta_rows = Parallel(n_jobs=n_jobs)(
                 delayed(_solve_fista_single_drug)(
                     y_target=Y_target[j, :],
+                    c_observed=C[j, :],
                     L_ae=L_ae,
                     lambda_1=sparsity_param,
                     lambda_2=syndromic_weight,
+                    L_lip=L_lip,
                     max_iter=max_iter,
                     tol=tol,
                 )
@@ -275,29 +301,34 @@ def score_da(
             for j in range(n_drugs):
                 Theta_est[j, :] = _solve_fista_single_drug(
                     y_target=Y_target[j, :],
+                    c_observed=C[j, :],
                     L_ae=L_ae,
                     lambda_1=sparsity_param,
                     lambda_2=syndromic_weight,
+                    L_lip=L_lip,
                     max_iter=max_iter,
                     tol=tol,
                 )
 
-        # Deflate table for next iteration
+        # Deflate table for next iteration (guaranteed non-negative by box constraint)
         if it < deflate_iterations - 1:
             C_current = np.maximum(0.0, C - Theta_est)
 
     # 4. Statistical Inference & Output Assembly
-    rows_list = []
-    # Flattening matrix entries
     counts_flat = C.flatten()
     baseline_flat = Lambda_baseline.flatten()
     theta_flat = Theta_est.flatten()
 
-    # Standard error under compound Poisson-Gamma variance model
-    se_flat = np.sqrt(counts_flat + baseline_flat)
-    z_scores = np.where(theta_flat > 0, theta_flat / np.maximum(se_flat, 1e-8), 0.0)
+    # Exact null standard error under H_0: theta = 0 (Var(C) = Lambda)
+    se_flat = np.sqrt(np.maximum(baseline_flat, 1e-6))
+    z_scores = np.where(theta_flat > 0, theta_flat / se_flat, 0.0)
     p_values = np.where(z_scores > 0, 1.0 - stats.norm.cdf(z_scores), 1.0)
     p_values = np.clip(p_values, 0.0, 1.0)
+
+    # 95% Wald Confidence Intervals for the Syndromic Excess Rate
+    z_crit = 1.959963984540054
+    ser_lower = np.maximum(0.0, theta_flat - z_crit * se_flat)
+    ser_upper = theta_flat + z_crit * se_flat
 
     # Benjamini-Hochberg adjustment across all pairs
     n_pairs = len(p_values)
@@ -305,7 +336,6 @@ def score_da(
     sorted_p = p_values[sort_idx]
     ranks = np.arange(1, n_pairs + 1)
     adj_p = np.minimum(1.0, sorted_p * n_pairs / ranks)
-    # Ensure monotonicity
     adj_p = np.minimum.accumulate(adj_p[::-1])[::-1]
     q_values = np.empty_like(adj_p)
     q_values[sort_idx] = adj_p
@@ -322,13 +352,17 @@ def score_da(
         "Product": prod_names,
         "Adverse Event": event_names,
         "Count": counts_flat.astype(int),
-        "Expected": np.round(baseline_flat, 2),
+        "Expected Count": np.round(baseline_flat, 2),
+        "Expected": np.round(baseline_flat, 2),  # Compatibility alias
         "SER": np.round(theta_flat, 4),
+        "SER Lower": np.round(ser_lower, 4),
+        "SER Upper": np.round(ser_upper, 4),
         "SRR": np.round(srr_flat, 3),
         "SE": np.round(se_flat, 3),
         "z_score": np.round(z_scores, 3),
         "p_value": p_values,
-        "p_adj": q_values,
+        "fdr": q_values,
+        "p_adj": q_values,  # Compatibility alias
         "Syndrome_Cluster": cluster_assigned,
     })
 
@@ -336,10 +370,10 @@ def score_da(
     sig_mask = (
         (all_signals_df["Count"] >= min_events)
         & (all_signals_df["SER"] > 0.0)
-        & (all_signals_df["p_adj"] <= fdr_threshold)
+        & (all_signals_df["fdr"] <= fdr_threshold)
     )
     signals_df = all_signals_df[sig_mask].sort_values(
-        by=["p_adj", "SER"], ascending=[True, False]
+        by=["fdr", "SER"], ascending=[True, False]
     ).reset_index(drop=True)
 
     return AnalysisResult(

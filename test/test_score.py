@@ -87,3 +87,13 @@ class TestSCORE:
         res = score_da(container, latent_rank=1, min_events=1)
         assert isinstance(res, AnalysisResult)
         assert len(res.all_signals) == 1
+
+    def test_score_consensus_integration(self, converted_data):
+        from vigipy import consensus_analysis, PRRConfig
+        res = consensus_analysis(
+            converted_data, configs=[PRRConfig(), SCOREConfig()], min_consensus=1
+        )
+        assert res.num_signals > 0
+        assert "score_score" in res.comparison_table.columns
+        assert "alert_score" in res.comparison_table.columns
+

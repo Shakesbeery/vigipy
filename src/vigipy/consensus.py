@@ -25,6 +25,8 @@ _PRIMARY_STAT_CANDIDATES = [
     "log2",
     "aROR",
     "LASSO Coefficient",
+    "SER",
+    "SRR",
     "count/expected",
 ]
 
