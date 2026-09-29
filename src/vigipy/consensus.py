@@ -46,15 +46,19 @@ def _extract_method_data(
 
     # 2. Determine bounds (CI or credible intervals)
     ci_lower_col, ci_upper_col = None, None
-    for cand_l, cand_u in [
-        ("CI Lower", "CI Upper"),
-        ("LowerBound", "UpperBound"),
-        ("aROR Lower", "aROR Upper"),
-    ]:
-        if cand_l in df.columns:
-            ci_lower_col = cand_l
-            ci_upper_col = cand_u if cand_u in df.columns else None
-            break
+    if score_col == "aROR" and "aROR Lower" in df.columns:
+        ci_lower_col = "aROR Lower"
+        ci_upper_col = "aROR Upper" if "aROR Upper" in df.columns else None
+    else:
+        for cand_l, cand_u in [
+            ("CI Lower", "CI Upper"),
+            ("LowerBound", "UpperBound"),
+            ("aROR Lower", "aROR Upper"),
+        ]:
+            if cand_l in df.columns:
+                ci_lower_col = cand_l
+                ci_upper_col = cand_u if cand_u in df.columns else None
+                break
 
     # If quantile was not chosen as the primary score, it may act as lower bound (e.g. BCPNN IC_025)
     if ci_lower_col is None and "quantile" in df.columns and score_col != "quantile":
@@ -194,9 +198,11 @@ class ConsensusResult:
             pd.DataFrame: A formatted table showing each method's alert status, primary metric name,
                 score value, confidence/credibility interval, p-value, FDR, and pair counts.
         """
+        prod_str = str(product)
+        ae_str = str(adverse_event)
         match = self.comparison_table[
-            (self.comparison_table["Product"] == product)
-            & (self.comparison_table["Adverse Event"] == adverse_event)
+            (self.comparison_table["Product"] == prod_str)
+            & (self.comparison_table["Adverse Event"] == ae_str)
         ]
         if match.empty:
             raise KeyError(
@@ -221,8 +227,8 @@ class ConsensusResult:
                 }
             )
         df_inspect = pd.DataFrame(records)
-        df_inspect.attrs["Product"] = product
-        df_inspect.attrs["Adverse Event"] = adverse_event
+        df_inspect.attrs["Product"] = prod_str
+        df_inspect.attrs["Adverse Event"] = ae_str
         df_inspect.attrs["votes"] = row.get("votes", 0)
         df_inspect.attrs["total_methods"] = row.get("total_methods", len(self.methods))
         df_inspect.attrs["consensus_score"] = row.get("consensus_score", 0.0)
@@ -240,18 +246,23 @@ class ConsensusResult:
         Returns:
             pd.DataFrame: 2x2 contingency table with marginal totals.
         """
-        col_a = f"alert_{method_a.lower()}"
-        col_b = f"alert_{method_b.lower()}"
+        ma = str(method_a).lower()
+        mb = str(method_b).lower()
+        col_a = f"alert_{ma}"
+        col_b = f"alert_{mb}"
         if col_a not in self.comparison_table.columns:
             raise ValueError(f"Method {method_a!r} not in consensus analysis results.")
         if col_b not in self.comparison_table.columns:
             raise ValueError(f"Method {method_b!r} not in consensus analysis results.")
 
+        s_a = pd.Categorical(self.comparison_table[col_a], categories=[False, True])
+        s_b = pd.Categorical(self.comparison_table[col_b], categories=[False, True])
         ct = pd.crosstab(
-            self.comparison_table[col_a].rename(f"{method_a.upper()} Alert"),
-            self.comparison_table[col_b].rename(f"{method_b.upper()} Alert"),
+            pd.Series(s_a, name=f"{ma.upper()} Alert"),
+            pd.Series(s_b, name=f"{mb.upper()} Alert"),
             margins=True,
             margins_name="Total",
+            dropna=False,
         )
         return ct
 
@@ -342,7 +353,7 @@ def consensus_analysis(
         >>> res.inspect_signal("DRUGA", "CARDIAC_ARREST")
     """
     if isinstance(data, dict):
-        raw_results = data
+        raw_results = {str(k).lower(): v for k, v in data.items()}
     elif isinstance(data, DataContainer):
         raw_results = analyze_all(data, configs=configs, **shared_overrides)
     else:
@@ -361,26 +372,26 @@ def consensus_analysis(
     for m in methods:
         res = raw_results[m]
         metric_name, sub_df = _extract_method_data(m, res)
+        sub_df = sub_df.drop_duplicates(subset=["Product", "Adverse Event"], keep="first")
         metric_names[m] = metric_name
 
         if master_df is None:
             master_df = sub_df
         else:
-            shared_cols = [
-                c
-                for c in ["Count", "Expected Count"]
-                if c in sub_df.columns and c in master_df.columns
-            ]
-            sub_to_merge = sub_df.drop(columns=shared_cols, errors="ignore")
             master_df = pd.merge(
-                master_df, sub_to_merge, on=["Product", "Adverse Event"], how="outer"
+                master_df,
+                sub_df,
+                on=["Product", "Adverse Event"],
+                how="outer",
+                suffixes=("", "_new"),
             )
-            # Fill missing Count or Expected Count if available in another method
             for c in ["Count", "Expected Count"]:
-                if c in sub_df.columns and c in master_df.columns:
-                    master_df[c] = master_df[c].fillna(sub_df[c])
-                elif c in sub_df.columns and c not in master_df.columns:
-                    master_df[c] = sub_df[c]
+                if f"{c}_new" in master_df.columns:
+                    if c in master_df.columns:
+                        master_df[c] = master_df[c].fillna(master_df[f"{c}_new"])
+                    else:
+                        master_df[c] = master_df[f"{c}_new"]
+                    master_df.drop(columns=[f"{c}_new"], inplace=True)
 
     assert master_df is not None
 
@@ -394,6 +405,10 @@ def consensus_analysis(
                 col_vals.isna(), False, col_vals
             ).astype(bool)
 
+    # Cast Count to integer if all counts are non-null
+    if "Count" in master_df.columns and master_df["Count"].notna().all():
+        master_df["Count"] = master_df["Count"].astype(int)
+
     # Compute votes
     alert_cols = [f"alert_{m}" for m in methods]
     master_df["votes"] = master_df[alert_cols].sum(axis=1).astype(int)
@@ -401,7 +416,14 @@ def consensus_analysis(
 
     # Compute normalized consensus score
     if weights is not None:
-        norm_weights = {m: float(weights.get(m, 1.0)) for m in methods}
+        norm_weights = {
+            str(k).lower(): float(v)
+            for k, v in weights.items()
+            if str(k).lower() in methods
+        }
+        for m in methods:
+            if m not in norm_weights:
+                norm_weights[m] = 1.0
         total_w = sum(norm_weights.values())
         if total_w > 0:
             weighted_sum = sum(
@@ -434,7 +456,7 @@ def consensus_analysis(
     ).reset_index(drop=True)
     master_df["composite_rank"] = np.arange(1, len(master_df) + 1)
 
-    # Organize column ordering
+    # Organize column ordering: group alerts together, then scores, CIs, p-values, FDRs
     leading_cols = [
         "Product",
         "Adverse Event",
@@ -447,21 +469,18 @@ def consensus_analysis(
         "agreement_tier",
     ]
     existing_leading = [c for c in leading_cols if c in master_df.columns]
-    method_cols = [
-        c
-        for c in master_df.columns
-        if c not in existing_leading
-        and any(
-            c.startswith(prefix)
-            for prefix in ("alert_", "score_", "ci_lower_", "ci_upper_", "p_value_", "fdr_")
-        )
-    ]
+    systematic_method_cols = []
+    for prefix in ("alert_", "score_", "ci_lower_", "ci_upper_", "p_value_", "fdr_"):
+        for m in methods:
+            col_name = f"{prefix}{m}"
+            if col_name in master_df.columns:
+                systematic_method_cols.append(col_name)
     remaining_cols = [
         c
         for c in master_df.columns
-        if c not in existing_leading and c not in method_cols
+        if c not in existing_leading and c not in systematic_method_cols
     ]
-    ordered_cols = existing_leading + method_cols + remaining_cols
+    ordered_cols = existing_leading + systematic_method_cols + remaining_cols
     master_df = master_df[ordered_cols]
 
     # Filter consensus signals
@@ -509,6 +528,7 @@ def consensus_analysis(
         columns={f"score_{m}": m for m in methods}
     )
     correlation_df = scores_sub.corr(method="spearman")
+    np.fill_diagonal(correlation_df.values, 1.0)
 
     method_agreement = {
         "jaccard": jaccard_df,

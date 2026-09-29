@@ -284,3 +284,89 @@ class TestConsensusAnalysis:
         assert "alert_lasso" in res.comparison_table.columns
         assert "score_prr" in res.comparison_table.columns
         assert "alert_prr" in res.comparison_table.columns
+
+        # Verify aROR bounds are picked up properly
+        if "aROR Lower" in res_lasso.all_signals.columns:
+            assert "ci_lower_lasso" in res.comparison_table.columns
+            # Ensure ci_lower_lasso is on the odds ratio scale (>= 0), not log-odds scale
+            lasso_mask = res.comparison_table["score_lasso"].notna()
+            assert (res.comparison_table.loc[lasso_mask, "ci_lower_lasso"] >= 0.0).all()
+
+    def test_differing_pair_sets_and_row_orders(self):
+        """Verify alignment when methods have different pairs, different order, and missing counts."""
+        from vigipy.utils.Container import AnalysisResult
+
+        df1 = pd.DataFrame({
+            "Product": ["P1", "P2"],
+            "Adverse Event": ["A1", "A2"],
+            "Count": [10, 20],
+            "Expected Count": [2.0, 4.0],
+            "PRR": [5.0, 5.0],
+            "p_value": [0.001, 0.002],
+        })
+        sig1 = df1.iloc[[0]]
+
+        df2 = pd.DataFrame({
+            "Product": ["P2", "P3", "P1"],
+            "Adverse Event": ["A2", "A3", "A1"],
+            "Count": [20, 30, 10],
+            "Expected Count": [4.0, 6.0, 2.0],
+            "ROR": [5.5, 6.5, 4.5],
+            "p_value": [0.001, 0.0001, 0.01],
+        })
+        sig2 = df2.iloc[[1]]
+
+        r1 = AnalysisResult(all_signals=df1, signals=sig1, num_signals=1)
+        r2 = AnalysisResult(all_signals=df2, signals=sig2, num_signals=1)
+
+        res = consensus_analysis({"prr": r1, "ror": r2})
+        assert len(res.comparison_table) == 3
+        # Check counts match correctly by product & AE
+        p3_row = res.comparison_table[res.comparison_table["Product"] == "P3"].iloc[0]
+        assert p3_row["Count"] == 30
+        assert p3_row["Expected Count"] == 6.0
+
+        p1_row = res.comparison_table[res.comparison_table["Product"] == "P1"].iloc[0]
+        assert p1_row["Count"] == 10
+        assert p1_row["Expected Count"] == 2.0
+
+    def test_case_insensitive_methods_and_weights(self):
+        """Verify method names and weights dictionary are case-insensitive."""
+        from vigipy.utils.Container import AnalysisResult
+
+        df = pd.DataFrame({
+            "Product": ["DrugA"],
+            "Adverse Event": ["AE1"],
+            "Count": [5],
+            "PRR": [3.0],
+            "p_value": [0.01],
+        })
+        r = AnalysisResult(all_signals=df, signals=df, num_signals=1)
+        res = consensus_analysis({"PRR": r}, min_consensus=1, weights={"prr": 2.0})
+        assert res.methods == ["prr"]
+        assert res.signals.iloc[0]["consensus_score"] == 1.0
+
+    def test_contingency_table_always_two_by_two(self):
+        """Verify contingency table produces a 2x2 grid with totals even if a method has 0 alerts."""
+        from vigipy.utils.Container import AnalysisResult
+
+        df = pd.DataFrame({
+            "Product": ["DrugA", "DrugB"],
+            "Adverse Event": ["AE1", "AE2"],
+            "Count": [5, 10],
+            "PRR": [3.0, 1.2],
+            "p_value": [0.01, 0.5],
+        })
+        # Method 1 has 1 alert, Method 2 has 0 alerts
+        r1 = AnalysisResult(all_signals=df, signals=df.iloc[[0]], num_signals=1)
+        r2 = AnalysisResult(all_signals=df, signals=df.iloc[0:0], num_signals=0)
+
+        res = consensus_analysis({"m1": r1, "m2": r2})
+        ct = res.contingency_table("m1", "m2")
+        # Must have False, True, Total along both axes
+        assert list(ct.index) == [False, True, "Total"]
+        assert list(ct.columns) == [False, True, "Total"]
+        assert ct.loc[True, True] == 0
+        assert ct.loc[True, False] == 1
+        assert ct.loc[False, False] == 1
+        assert ct.loc["Total", "Total"] == 2
