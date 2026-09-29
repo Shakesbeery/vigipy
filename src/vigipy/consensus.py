@@ -528,7 +528,9 @@ def consensus_analysis(
         columns={f"score_{m}": m for m in methods}
     )
     correlation_df = scores_sub.corr(method="spearman")
-    np.fill_diagonal(correlation_df.values, 1.0)
+    corr_vals = correlation_df.to_numpy(copy=True)
+    np.fill_diagonal(corr_vals, 1.0)
+    correlation_df = pd.DataFrame(corr_vals, index=methods, columns=methods, dtype=float)
 
     method_agreement = {
         "jaccard": jaccard_df,

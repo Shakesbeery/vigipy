@@ -310,7 +310,7 @@ def _build_sparse_crosstab(data, index_label, column_label):
     csr.eliminate_zeros()
     result = pd.DataFrame.sparse.from_spmatrix(
         csr, index=idx_cat.categories, columns=col_cat.categories
-    )
+    ).astype(pd.SparseDtype(float, 0.0))
     return result
 
 
@@ -333,7 +333,7 @@ def _build_sparse_dummies(series):
     ).tocsr()
     result = pd.DataFrame.sparse.from_spmatrix(
         csr, columns=cat.categories
-    )
+    ).astype(pd.SparseDtype(float, 0.0))
     return result
 
 

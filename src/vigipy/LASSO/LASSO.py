@@ -20,6 +20,15 @@ from ..utils.Container import AnalysisResult, DataContainer
 from ..utils.common import build_params
 
 
+def _extract_y_vector(series):
+    """Extract a dense 1D float array from a Series, safely handling sparse types and NaNs."""
+    if hasattr(series, "to_numpy"):
+        arr = series.to_numpy(dtype=np.float64, na_value=0.0)
+    else:
+        arr = np.ascontiguousarray(series.values, dtype=np.float64)
+    return np.nan_to_num(arr, nan=0.0)
+
+
 def _fit_single_adverse_event(
     column_name,
     y,
@@ -49,13 +58,13 @@ def _fit_single_adverse_event(
     if issparse(X_mat):
         counts_raw = X_mat.T.dot(y)
         if isinstance(counts_raw, np.matrix):
-            counts = counts_raw.A1.astype(int)
+            counts = np.nan_to_num(counts_raw.A1, nan=0.0).astype(int)
         elif hasattr(counts_raw, "toarray"):
-            counts = counts_raw.toarray().flatten().astype(int)
+            counts = np.nan_to_num(counts_raw.toarray().flatten(), nan=0.0).astype(int)
         else:
-            counts = np.array(counts_raw).flatten().astype(int)
+            counts = np.nan_to_num(np.array(counts_raw).flatten(), nan=0.0).astype(int)
     else:
-        counts = np.sum(X_mat * y[:, None], axis=0).astype(int)
+        counts = np.nan_to_num(np.sum(X_mat * y[:, None], axis=0), nan=0.0).astype(int)
 
     res_dict = {
         "Product": [],
@@ -487,7 +496,7 @@ def lasso(
         results_list = Parallel(n_jobs=n_jobs)(
             delayed(_fit_single_adverse_event)(
                 column_name=column,
-                y=np.ascontiguousarray(ys[column].values, dtype=np.float64),
+                y=_extract_y_vector(ys[column]),
                 X_mat=X_mat,
                 products=products,
                 n_features=n_features,
@@ -516,7 +525,7 @@ def lasso(
                 res[k].extend(v)
     else:
         for i, column in enumerate(ys.columns):
-            y = np.ascontiguousarray(ys[column].values, dtype=np.float64)
+            y = _extract_y_vector(ys[column])
             r_dict = _fit_single_adverse_event(
                 column_name=column,
                 y=y,
