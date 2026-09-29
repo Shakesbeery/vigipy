@@ -536,34 +536,34 @@ def score_ddi(
     archetypes = []
 
     for p_idx, p_name in enumerate(pair_names):
-        d1, d2 = pair_mapping[p_name]
+        raw_pair = pair_mapping[p_name]
+        drugs = tuple(raw_pair) if isinstance(raw_pair, (list, tuple)) else (str(raw_pair),)
+        k_order = len(drugs)
+
         c_p = C_all[cont.index.get_loc(p_name), :]
         C_pairs[p_idx, :] = c_p
         r_p = np.sum(c_p)
         e_p = (r_p * C_ae) / N_tot
 
-        # Solo counts of Drug 1 and Drug 2 (subtracting the co-prescription counts c_p)
-        c_1_raw = single_counts.get(d1, c_p)
-        c_2_raw = single_counts.get(d2, c_p)
-        c_1_solo = np.maximum(0.0, c_1_raw - c_p)
-        c_2_solo = np.maximum(0.0, c_2_raw - c_p)
-
-        r_1_solo = np.sum(c_1_solo)
-        r_2_solo = np.sum(c_2_solo)
-
-        e_1_solo = (r_1_solo * C_ae) / N_tot if r_1_solo > 0 else np.full(n_events, 1e-4)
-        e_2_solo = (r_2_solo * C_ae) / N_tot if r_2_solo > 0 else np.full(n_events, 1e-4)
-
-        rr_1 = np.where(e_1_solo > 0, c_1_solo / np.maximum(e_1_solo, 1e-6), 1.0)
-        rr_2 = np.where(e_2_solo > 0, c_2_solo / np.maximum(e_2_solo, 1e-6), 1.0)
-
-        rr_1_pos = np.maximum(1.0, rr_1)
-        rr_2_pos = np.maximum(1.0, rr_2)
+        # Solo counts and baseline relative risks for each constituent drug
+        rr_list = []
+        c_solo_list = []
+        for d in drugs:
+            c_raw = single_counts.get(d, c_p)
+            c_solo = np.maximum(0.0, c_raw - c_p)
+            r_solo = np.sum(c_solo)
+            e_solo = (r_solo * C_ae) / N_tot if r_solo > 0 else np.full(n_events, 1e-4)
+            rr = np.where(e_solo > 0, c_solo / np.maximum(e_solo, 1e-6), 1.0)
+            rr_list.append(np.maximum(1.0, rr))
+            c_solo_list.append(c_solo)
 
         if interaction_model == "multiplicative":
-            rr_null = rr_1_pos * rr_2_pos
+            rr_null = np.ones(n_events, dtype=np.float64)
+            for rr_item in rr_list:
+                rr_null *= rr_item
         else:
-            rr_null = np.maximum(1.0, rr_1_pos + rr_2_pos - 1.0)
+            rr_sum = np.sum(rr_list, axis=0)
+            rr_null = np.maximum(1.0, rr_sum - (k_order - 1.0))
 
         lam_null = np.maximum(1e-4, e_p * rr_null)
         Lambda_null[p_idx, :] = lam_null
@@ -571,14 +571,16 @@ def score_ddi(
 
         # Classify interaction archetype per event
         for i in range(n_events):
-            sig1 = (rr_1[i] >= 2.0 and c_1_solo[i] >= min_events)
-            sig2 = (rr_2[i] >= 2.0 and c_2_solo[i] >= min_events)
-            if not sig1 and not sig2:
+            active_count = sum(
+                (rr_list[d_idx][i] >= 2.0 and c_solo_list[d_idx][i] >= min_events)
+                for d_idx in range(k_order)
+            )
+            if active_count == 0:
                 archetypes.append("EMERGENT")
-            elif sig1 != sig2:
+            elif active_count < k_order:
                 archetypes.append("POTENTIATED")
             else:
-                archetypes.append("TWO_HIT")
+                archetypes.append("TWO_HIT" if k_order == 2 else "MULTI_HIT")
 
     # 5. Solve Box-Constrained FISTA for each pair
     if n_jobs != 1 and n_pairs > 1:
@@ -641,12 +643,16 @@ def score_ddi(
 
     p_indices, e_indices = np.unravel_index(np.arange(total_comparisons), (n_pairs, n_events))
     p_names = [pair_names[p] for p in p_indices]
+    components = [", ".join(pair_mapping[pair_names[p]]) for p in p_indices]
+    order_vals = [len(pair_mapping[pair_names[p]]) for p in p_indices]
     drug1_names = [pair_mapping[pair_names[p]][0] for p in p_indices]
-    drug2_names = [pair_mapping[pair_names[p]][1] for p in p_indices]
+    drug2_names = [pair_mapping[pair_names[p]][1] if len(pair_mapping[pair_names[p]]) > 1 else "" for p in p_indices]
     event_names = [events[e] for e in e_indices]
     clusters_assigned = [int(clusters[e]) for e in e_indices]
 
     all_signals_df = pd.DataFrame({
+        "Components": components,
+        "Order": order_vals,
         "Drug_1": drug1_names,
         "Drug_2": drug2_names,
         "Product": p_names,

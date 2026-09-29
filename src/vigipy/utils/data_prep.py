@@ -263,6 +263,7 @@ def convert_ddi(
     ae_label: str = "AE",
     report_id_label: str = "report_id",
     min_co_reports: int = 3,
+    max_order: int = 2,
     include_singles: bool = True,
     target_drugs: Optional[Union[list[str], set[str]]] = None,
     pair_delimiter: str = " + ",
@@ -271,10 +272,10 @@ def convert_ddi(
 ) -> DataContainer:
     """Convert case-level report data into a Drug-Drug Interaction (DDI) DataContainer.
 
-    Identifies co-prescribed drug pairs meeting a co-reporting threshold and generates
-    interaction columns alongside single-drug features. Produces a full DataContainer
-    compatible with all vigipy disproportionality methods (PRR, ROR, GPS, LASSO, SCORE-DA,
-    and SCORE-DDI).
+    Identifies co-prescribed drug combinations (pairs, triplets, etc. up to max_order)
+    meeting a co-reporting threshold and generates interaction columns alongside
+    single-drug features. Produces a full DataContainer compatible with all vigipy
+    disproportionality methods (PRR, ROR, GPS, LASSO, SCORE-DA, and SCORE-DDI).
 
     Parameters:
         data: A DataFrame consisting of report-level product and adverse event occurrences.
@@ -282,13 +283,15 @@ def convert_ddi(
         ae_label: Column containing adverse event terms. Defaults to "AE".
         report_id_label: Column containing individual report / patient identifiers. Required
             to determine true patient-level co-exposure. Defaults to "report_id".
-        min_co_reports: Minimum number of distinct reports where Drug A and Drug B must
-            appear together to be included as a candidate interaction pair. Defaults to 3.
+        min_co_reports: Minimum number of distinct reports where the drug combination must
+            appear together to be included as a candidate interaction entity. Defaults to 3.
+        max_order: Maximum order of interactions to generate (2 for pairs, 3 for triplets, etc.).
+            Defaults to 2.
         include_singles: Whether to include single-drug main effect features alongside the
             interaction pairs. True is strongly recommended so models can condition on
             individual drug baselines. Defaults to True.
         target_drugs: Optional list or set of drug names to focus screening. If specified,
-            only pairs containing at least one target drug are retained. Defaults to None.
+            only combinations containing at least one target drug are retained. Defaults to None.
         pair_delimiter: String delimiter used to join drug names in pairs. Defaults to " + ".
         sparse: If True, uses memory-efficient scipy.sparse CSR representation. Defaults to True.
         covariate_labels: Optional list of per-report covariate column names (e.g. ['age', 'sex']).
@@ -297,6 +300,8 @@ def convert_ddi(
         DataContainer: Fully initialized container with product_features, event_outcomes,
             contingency, data, and pair_mapping.
     """
+    if max_order < 2:
+        raise ValueError(f"max_order must be >= 2 (got {max_order}).")
     if report_id_label not in data.columns:
         raise ValueError(
             f"report_id_label '{report_id_label}' not found in data columns. "
@@ -325,39 +330,68 @@ def convert_ddi(
 
     X_single_csr = prod_df.sparse.to_coo().tocsr()
     single_drugs = list(prod_df.columns)
-
-    # Co-occurrence across reports: M_co = X.T @ X
-    M_co = (X_single_csr.T @ X_single_csr).tocoo()
     target_set = set(target_drugs) if target_drugs is not None else None
 
-    pair_list = []
+    # Multi-order interaction mining using Apriori downward closure
+    current_level_combos: dict[tuple[int, ...], sp.csr_matrix] = {}
+
+    # Order 2: Pairs
+    M_co = (X_single_csr.T @ X_single_csr).tocoo()
     for j, k, count_val in zip(M_co.row, M_co.col, M_co.data):
         if j < k and count_val >= min_co_reports:
             d1, d2 = single_drugs[j], single_drugs[k]
             if target_set is not None and (d1 not in target_set and d2 not in target_set):
                 continue
-            pair_list.append((j, k, d1, d2, int(count_val)))
+            pair_col = X_single_csr[:, j].multiply(X_single_csr[:, k])
+            current_level_combos[(j, k)] = pair_col
 
-    if not pair_list:
-        msg = f"No drug pairs met the threshold of min_co_reports={min_co_reports}."
+    all_combos: dict[tuple[int, ...], sp.csr_matrix] = dict(current_level_combos)
+
+    # Order 3 .. max_order
+    for order in range(3, max_order + 1):
+        prev_keys = list(current_level_combos.keys())
+        next_level_combos: dict[tuple[int, ...], sp.csr_matrix] = {}
+        n_prev = len(prev_keys)
+
+        for a in range(n_prev):
+            k1 = prev_keys[a]
+            for b in range(a + 1, n_prev):
+                k2 = prev_keys[b]
+                if k1[:-1] == k2[:-1] and k1[-1] < k2[-1]:
+                    candidate = k1 + (k2[-1],)
+                    cand_col = current_level_combos[k1].multiply(X_single_csr[:, k2[-1]])
+                    cand_count = cand_col.nnz
+                    if cand_count >= min_co_reports:
+                        cand_drugs = [single_drugs[idx] for idx in candidate]
+                        if target_set is not None and not any(d in target_set for d in cand_drugs):
+                            continue
+                        next_level_combos[candidate] = cand_col
+
+        all_combos.update(next_level_combos)
+        current_level_combos = next_level_combos
+        if not current_level_combos:
+            break
+
+    if not all_combos:
+        msg = f"No drug combinations met the threshold of min_co_reports={min_co_reports}."
         if target_drugs:
             msg += f" (target_drugs={target_drugs})"
         raise ValueError(msg)
 
-    # Sort pairs by co-occurrence count descending
-    pair_list.sort(key=lambda x: x[4], reverse=True)
+    # Sort combos by order ascending, then frequency descending
+    combo_items = list(all_combos.items())
+    combo_items.sort(key=lambda item: (len(item[0]), -item[1].nnz))
 
     pair_names = []
     pair_cols = []
-    pair_mapping = {}
+    pair_mapping: dict[str, tuple[str, ...]] = {}
 
-    for j, k, d1, d2, _ in pair_list:
-        pname = f"{d1}{pair_delimiter}{d2}"
-        pair_names.append(pname)
-        pair_mapping[pname] = (d1, d2)
-        # Sparse column elementwise product
-        inter_col = X_single_csr[:, j].multiply(X_single_csr[:, k])
-        pair_cols.append(inter_col)
+    for indices, col in combo_items:
+        drug_names = tuple(single_drugs[idx] for idx in indices)
+        name = pair_delimiter.join(drug_names)
+        pair_names.append(name)
+        pair_cols.append(col)
+        pair_mapping[name] = drug_names
 
     X_pairs_csr = sp.hstack(pair_cols, format="csr")
 

@@ -78,6 +78,13 @@ def synthetic_ddi_df():
         event = rng.choice(["Headache", "Fatigue", "Dizziness", "Insomnia"])
         rows.append({"report_id": r_id, "drug": "Drug_D", "event": event})
 
+    # 7. 15 reports with Drug_A + Drug_B + Drug_C (triplet interaction)
+    for rep_id in range(381, 396):
+        r_id = f"REP_{rep_id}"
+        rows.append({"report_id": r_id, "drug": "Drug_A", "event": "Coma"})
+        rows.append({"report_id": r_id, "drug": "Drug_B", "event": "Coma"})
+        rows.append({"report_id": r_id, "drug": "Drug_C", "event": "Coma"})
+
     return pd.DataFrame(rows)
 
 
@@ -124,7 +131,7 @@ class TestConvertDDI:
         assert "Drug_C + Drug_D" not in container.pair_mapping
 
     def test_convert_ddi_high_threshold_error(self, synthetic_ddi_df):
-        with pytest.raises(ValueError, match="No drug pairs met the threshold"):
+        with pytest.raises(ValueError, match="No drug combinations met the threshold"):
             convert_ddi(
                 synthetic_ddi_df,
                 product_label="drug",
@@ -153,6 +160,20 @@ class TestConvertDDI:
         )
         assert isinstance(container, DataContainer)
         assert not hasattr(container.product_features, "sparse")
+
+    def test_max_order_triplets_convert(self, synthetic_ddi_df):
+        container = convert_ddi(
+            synthetic_ddi_df,
+            product_label="drug",
+            ae_label="event",
+            report_id_label="report_id",
+            min_co_reports=5,
+            max_order=3,
+        )
+        assert "Drug_A + Drug_B + Drug_C" in container.pair_mapping
+        assert container.pair_mapping["Drug_A + Drug_B + Drug_C"] == ("Drug_A", "Drug_B", "Drug_C")
+        assert "Drug_A + Drug_B + Drug_C" in container.contingency.index
+        assert container.contingency.loc["Drug_A + Drug_B + Drug_C", "Coma"] == 15
 
 
 class TestSCOREDDI:
@@ -252,6 +273,27 @@ class TestSCOREDDI:
         )
         with pytest.raises(ValueError, match="Invalid interaction_model"):
             score_ddi(container, interaction_model="log_linear")
+
+    def test_score_ddi_triplets(self, synthetic_ddi_df):
+        container = convert_ddi(
+            synthetic_ddi_df,
+            product_label="drug",
+            ae_label="event",
+            report_id_label="report_id",
+            min_co_reports=5,
+            max_order=3,
+        )
+        res = score_ddi(container, min_events=2, syndromic_weight=0.3)
+        assert isinstance(res, AnalysisResult)
+        triplet_hits = res.signals[res.signals["Product"] == "Drug_A + Drug_B + Drug_C"]
+        assert len(triplet_hits) > 0
+        hit = triplet_hits.iloc[0]
+        assert hit["Adverse Event"] == "Coma"
+        assert hit["Order"] == 3
+        assert hit["Components"] == "Drug_A, Drug_B, Drug_C"
+        assert hit["Count"] == 15
+        assert hit["SER_Interaction"] > 0
+        assert hit["Interaction_Archetype"] == "EMERGENT"
 
 
 class TestDDIPlatformCompatibility:
