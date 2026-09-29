@@ -8,7 +8,12 @@ from scipy.optimize import minimize
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils import calculate_expected
-from ..utils.common import compute_bayesian_metrics, determine_num_signals, build_params
+from ..utils.common import (
+    compute_bayesian_metrics,
+    determine_num_signals,
+    build_params,
+    build_bayesian_result,
+)
 from ..utils.types import DecisionMetric, GPSRankingStatistic, ExpectedMethod
 from ..utils.distribution_funcs.quantile_funcs import quantiles as _quantiles_scalar
 
@@ -25,6 +30,79 @@ BOUNDED_METHODS = {
     "COBYLA",
     "COBYQA",
 }
+
+
+def _optimize_gps_priors(
+    container: DataContainer,
+    priors: np.ndarray,
+    truncate: bool,
+    truncate_thres: float,
+    n11: np.ndarray,
+    expected: np.ndarray,
+    N: int,
+    minimization_method: str,
+    minimization_bounds: tuple[tuple[float, float], ...] | None,
+    minimization_options: dict | None,
+) -> tuple[np.ndarray, str]:
+    """Estimate empirical Bayes hyperprior parameters via maximum likelihood."""
+    if minimization_method not in BOUNDED_METHODS:
+        minimization_bounds = None
+    elif minimization_bounds is None:
+        minimization_bounds = ((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1))
+
+    if minimization_options is None:
+        minimization_options = {}
+
+    if not truncate:
+        data_cont = container.contingency
+        n1__mat = data_cont.sum(axis=1)
+        n_1_mat = data_cont.sum(axis=0)
+        rep = len(n_1_mat)
+        n1__c = np.tile(n1__mat.values, reps=rep)
+        rep = len(n1__mat)
+        n_1_c = np.repeat(n_1_mat.values, repeats=rep)
+        E_c = np.asarray(n1__c, dtype=np.float64) * n_1_c / N
+        n11_c_temp = []
+        for col in data_cont:
+            n11_c_temp.extend(list(data_cont[col]))
+        n11_c = np.asarray(n11_c_temp)
+
+        gammaln_n11_1_c = gammaln(n11_c + 1.0)
+        p_out = minimize(
+            non_truncated_likelihood,
+            x0=priors,
+            args=(n11_c, E_c, gammaln_n11_1_c),
+            options={"maxiter": 500},
+            method=minimization_method,
+            bounds=minimization_bounds,
+            **minimization_options,
+        )
+    else:
+        trunc = truncate_thres - 1
+        n11_trunc = n11[n11 >= truncate_thres]
+        E_trunc = expected[n11 >= truncate_thres]
+        gammaln_n11_1 = gammaln(n11_trunc + 1.0)
+        p_out = minimize(
+            truncated_likelihood,
+            x0=priors,
+            args=(
+                n11_trunc,
+                E_trunc,
+                trunc,
+                gammaln_n11_1,
+            ),
+            options={"maxiter": 500},
+            method=minimization_method,
+            bounds=minimization_bounds,
+            **minimization_options,
+        )
+
+    priors_opt = p_out.x
+    if np.any(priors_opt < 0) or priors_opt[4] > 1:
+        warnings.warn(
+            f"Calculated priors violate distribution constraints. Alpha and Beta parameters should be >0 and mixture weight should be >=0 and <=1. Current priors: {priors_opt}. Numerical instability likely during processing. Considering using a minimization method that supports bounds."
+        )
+    return priors_opt, p_out.message
 
 
 def gps(
@@ -44,62 +122,38 @@ def gps(
     minimization_bounds: tuple[tuple[float, float], ...] = ((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1)),
     minimization_options: dict | None = None,
 ) -> AnalysisResult:
-    """
-    Computes signal detection based on Multi-item enabled Gamma Poisson Shrinkage (GPS) using prior distributions
-    for adverse event and product feature data.
+    """Computes signal detection based on Multi-item enabled Gamma Poisson Shrinkage (GPS).
+
+    Clinical Intuition:
+        GPS models the true relative risk distribution across all drug-event pairs as a mixture
+        of two Gamma distributions: a dominant background null component (capturing non-signals
+        centered near RR=1.0) and an elevated risk component. By shrinking observed counts toward
+        this empirical Bayesian mixture, GPS stabilizes high-variance small counts (preventing
+        spurious alerts from 1 or 2 isolated reports) while producing robust empirical Bayes
+        geometric mean (EBGM) estimates and conservative 5th percentile lower bounds (EB05).
+        It is the foundational methodology behind the FDA's Empirica Signal / MGPS system.
 
     Parameters:
-    -----------
-    container : object
-        A container object holding the input data, including event counts (`events`),
-        product-event pairs (`product_aes`), and across-brand counts (`count_across_brands`).
-    relative_risk : float, optional (default=1)
-        The threshold for relative risk used in the posterior probability calculations.
-    min_events : int, optional (default=1)
-        The minimum number of events required for an adverse event to be considered in the analysis.
-    decision_metric : str, optional (default="rank")
-        The decision rule for signal detection. Options are 'rank', 'fdr', or 'signals'.
-    decision_thres : float, optional (default=0.05)
-        The threshold used in the decision rule to filter significant signals.
-    ranking_statistic : str, optional (default="log2")
-        The ranking statistic used to order the results. Options include 'log2', 'p_value', or 'quantile'.
-    truncate : bool, optional (default=False)
-        Whether to truncate likelihoods below a certain threshold for stability in signal detection.
-    truncate_thres : float, optional (default=1)
-        The truncation threshold for likelihood values if `truncate` is set to True.
-    prior_init : dict, optional
-        Initial values for the prior distributions used in Bayesian inference. Contains parameters for two Poisson
-        distributions (alpha1, beta1, alpha2, beta2) and the mixture weight (w).
-    prior_param : array, optional (default=None)
-        Manually provided prior distribution parameters. If None, the function estimates priors using optimization.
-    expected_method : str, optional (default="mantel-haentzel")
-        The method used to calculate the expected event counts. Options include "mantel-haentzel", "negative-binomial" and "poisson".
-    method_alpha : float, optional (default=1)
-        Dispersion parameter used in the expected value calculation method.
-    minimization_method : str, optional (default="Nelder-Mead")
-        The optimization method used for estimating prior parameters if `prior_param` is None.
-    minimization_bounds : tuple, optional
-        Bounds on the prior parameter values for the optimization process.
-    minimization_options : dict, optional
-        Options for the minimization routine.
+        container: A container object holding the input data, including event counts (`events`),
+            product-event pairs (`product_aes`), and across-brand counts (`count_across_brands`).
+        relative_risk: The threshold for relative risk used in posterior probability calculations.
+        min_events: Minimum number of events required for a pair to be retained.
+        decision_metric: Decision rule for signal detection ('rank', 'fdr', or 'signals').
+        decision_thres: Threshold used in the decision rule to filter significant signals.
+        ranking_statistic: Ranking statistic to order results ('log2', 'p_value', or 'quantile').
+        truncate: Whether to truncate likelihoods below a threshold for numerical stability.
+        truncate_thres: Truncation threshold for likelihood values if truncate is True.
+        prior_init: Initial values for the prior distributions (alpha1, beta1, alpha2, beta2, w).
+        prior_param: Manually provided prior distribution parameters. If None, estimates priors via ML.
+        expected_method: Method for calculating expected counts ('mantel-haentzel', 'poisson', 'negative-binomial').
+        method_alpha: Dispersion parameter used in the expected value calculation method.
+        minimization_method: Optimization algorithm for estimating prior parameters (default: 'Nelder-Mead').
+        minimization_bounds: Bounds on prior parameters during optimization.
+        minimization_options: Options passed directly to scipy.optimize.minimize.
 
     Returns:
-    --------
-    RES : object
-        A container object with the following attributes:
-        - `param`: A dictionary of input parameters, including prior initialization and optimization results.
-        - `all_signals`: A DataFrame containing detailed results of signal detection, including posterior probabilities,
-          expected counts, and ranking statistics.
-        - `signals`: A DataFrame of filtered signals according to the decision metric and threshold.
-        - `num_signals`: The number of signals detected based on the decision rule.
-
-    Notes:
-    ------
-    - This function implements a Bayesian model to calculate posterior probabilities using a mixture of two negative
-      binomial distributions.
-    - The function can apply different ranking statistics to order results, such as p-value, quantile, or log2.
-    - The optimization process is used to estimate the prior parameters unless provided manually.
-    - The function can handle truncation for numerical stability when dealing with sparse data.
+        AnalysisResult containing detected signals, all evaluated pairs, signal count,
+        and model parameters.
     """
     if prior_init is None:
         prior_init = {
@@ -147,69 +201,23 @@ def gps(
     n1j = np.asarray(DATA["product_aes"], dtype=np.float64)
     ni1 = np.asarray(DATA["count_across_brands"], dtype=np.float64)
     expected = calculate_expected(N, n1j, ni1, n11, expected_method, method_alpha)
-    p_out = True
     code_convergence = "User-provided priors"
 
     if prior_param is None:
-        p_out = False
-        if minimization_method not in BOUNDED_METHODS:
-            minimization_bounds = None
-        elif minimization_bounds is None:
-            minimization_bounds = ((EPS, 20), (EPS, 10), (EPS, 20), (EPS, 10), (0, 1))
-
-        if minimization_options is None:
-            minimization_options = {}
-
-        if not truncate:
-            data_cont = container.contingency
-            n1__mat = data_cont.sum(axis=1)
-            n_1_mat = data_cont.sum(axis=0)
-            rep = len(n_1_mat)
-            n1__c = np.tile(n1__mat.values, reps=rep)
-            rep = len(n1__mat)
-            n_1_c = np.repeat(n_1_mat.values, repeats=rep)
-            E_c = np.asarray(n1__c, dtype=np.float64) * n_1_c / N
-            n11_c_temp = []
-            for col in data_cont:
-                n11_c_temp.extend(list(data_cont[col]))
-            n11_c = np.asarray(n11_c_temp)
-
-            gammaln_n11_1_c = gammaln(n11_c + 1.0)
-            p_out = minimize(
-                non_truncated_likelihood,
-                x0=priors,
-                args=(n11_c, E_c, gammaln_n11_1_c),
-                options={"maxiter": 500},
-                method=minimization_method,
-                bounds=minimization_bounds,
-                **minimization_options,
-            )
-        elif truncate:
-            trunc = truncate_thres - 1
-            n11_trunc = n11[n11 >= truncate_thres]
-            E_trunc = expected[n11 >= truncate_thres]
-            gammaln_n11_1 = gammaln(n11_trunc + 1.0)
-            p_out = minimize(
-                truncated_likelihood,
-                x0=priors,
-                args=(
-                    n11_trunc,
-                    E_trunc,
-                    trunc,
-                    gammaln_n11_1,
-                ),
-                options={"maxiter": 500},
-                method=minimization_method,
-                bounds=minimization_bounds,
-                **minimization_options,
-            )
-
-        priors = p_out.x
-        if np.any(priors < 0) or priors[4] > 1:
-            warnings.warn(
-                f"Calculated priors violate distribution constraints. Alpha and Beta parameters should be >0 and mixture weight should be >=0 and <=1. Current priors: {priors}. Numerical instability likely during processing. Considering using a minimization method that supports bounds."
-            )
-        code_convergence = p_out.message
+        priors, code_convergence = _optimize_gps_priors(
+            container=container,
+            priors=priors,
+            truncate=truncate,
+            truncate_thres=truncate_thres,
+            n11=n11,
+            expected=expected,
+            N=N,
+            minimization_method=minimization_method,
+            minimization_bounds=minimization_bounds,
+            minimization_options=minimization_options,
+        )
+    else:
+        priors = np.asarray(prior_param, dtype=np.float64)
 
     if min_events > 1:
         DATA = DATA[DATA.events >= min_events]
@@ -219,7 +227,6 @@ def gps(
         n11 = n11[n11 >= min_events]
 
     num_cell = len(n11)
-    posterior_probability = []
 
     # Posterior probability of the null hypothesis
     _p_post1 = np.clip(priors[1] / (priors[1] + expected + 1e-10), 1e-10, 1.0 - 1e-10)
@@ -263,12 +270,14 @@ def gps(
         priors[3] + expected,
     )
 
-    # Assignment based on the method
+    # Assignment based on ranking statistic
     if ranking_statistic == "p_value":
         RankStat = posterior_probability
     elif ranking_statistic == "quantile":
         RankStat = LB
     elif ranking_statistic == "log2":
+        RankStat = np.asarray(EBlog2, dtype=np.float64)
+    else:
         RankStat = np.asarray(EBlog2, dtype=np.float64)
 
     FDR, FNR, FOR, Se, Sp = compute_bayesian_metrics(posterior_probability, num_cell, ranking_statistic, RankStat)
@@ -276,90 +285,34 @@ def gps(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
     )
 
-    name = DATA["product_name"]
-    ae = DATA["ae_name"]
-    count = n11
     params = build_params(
         "gps", input_params,
         prior_init=prior_init, prior_param=priors, convergence=code_convergence,
     )
 
-    # SIGNALS RESULTS and presentation
-    if ranking_statistic == "p_value":
-        all_signals = pd.DataFrame(
-            {
-                "Product": name,
-                "Adverse Event": ae,
-                "Count": count,
-                "Expected Count": expected,
-                "p_value": RankStat,
-                "count/expected": np.where(expected > 0, count / expected, np.nan),
-                "EBGM": ebgm,
-                "LowerBound": LB,
-                "UpperBound": UB,
-                "product margin": n1j,
-                "event margin": ni1,
-                "fdr": FDR,
-                "FNR": FNR,
-                "FOR": FOR,
-                "Se": Se,
-                "Sp": Sp,
-            }
-        ).sort_values(by=[ranking_statistic])
+    extra_cols = {
+        "EBGM": ebgm,
+        "LowerBound": LB,
+        "UpperBound": UB,
+    }
 
-    elif ranking_statistic == "quantile":
-        all_signals = pd.DataFrame(
-            {
-                "Product": name,
-                "Adverse Event": ae,
-                "Count": count,
-                "Expected Count": expected,
-                "quantile": RankStat,
-                "count/expected": np.where(expected > 0, count / expected, np.nan),
-                "EBGM": ebgm,
-                "LowerBound": LB,
-                "UpperBound": UB,
-                "product margin": n1j,
-                "event margin": ni1,
-                "fdr": FDR,
-                "FNR": FNR,
-                "FOR": FOR,
-                "Se": Se,
-                "Sp": Sp,
-                "posterior_probability": posterior_probability,
-            }
-        ).sort_values(by=[ranking_statistic], ascending=False)
-    else:
-        all_signals = pd.DataFrame(
-            {
-                "Product": name,
-                "Adverse Event": ae,
-                "Count": count,
-                "Expected Count": expected,
-                "log2": RankStat,
-                "count/expected": np.where(expected > 0, count / expected, np.nan),
-                "EBGM": ebgm,
-                "LowerBound": LB,
-                "UpperBound": UB,
-                "product margin": n1j,
-                "event margin": ni1,
-                "fdr": FDR,
-                "FNR": FNR,
-                "FOR": FOR,
-                "Se": Se,
-                "Sp": Sp,
-                "p_value": posterior_probability,
-            }
-        ).sort_values(by=[ranking_statistic], ascending=False)
-
-    # List of Signals generated according to the method
-    all_signals.index = np.arange(0, len(all_signals.index))
-
-    return AnalysisResult(
-        all_signals=all_signals,
-        signals=all_signals.iloc[0:num_signals],
+    return build_bayesian_result(
+        DATA,
+        count=n11,
+        expected=expected,
+        ranking_statistic=ranking_statistic,
+        rank_stat=RankStat,
+        posterior_probability=posterior_probability,
+        n1j=n1j,
+        ni1=ni1,
+        FDR=FDR,
+        FNR=FNR,
+        FOR=FOR,
+        Se=Se,
+        Sp=Sp,
         num_signals=num_signals,
         params=params,
+        extra_cols=extra_cols,
     )
 
 

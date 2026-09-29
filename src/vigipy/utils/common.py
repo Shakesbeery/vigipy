@@ -7,11 +7,12 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 from .lbe import lbe
 from .Container import AnalysisResult, DataContainer
 from .expectations import calculate_expected
-from .types import DecisionMetric, RankingStatistic, ExpectedMethod
+from .types import DecisionMetric, RankingStatistic, FreqRankingStatistic, ExpectedMethod
 
 # Small constant added to denominators to prevent division by zero
 DIVISION_EPSILON = 1e-7
@@ -277,6 +278,118 @@ def build_freq_result(
         all_signals = all_signals.rename(
             columns={"p_value": "lower_bound_CI(95%)"}
         ).sort_values(by=["lower_bound_CI(95%)"], ascending=False)
+
+    return AnalysisResult(
+        all_signals=all_signals,
+        signals=all_signals.iloc[0:num_signals],
+        num_signals=num_signals,
+        params=params,
+    )
+
+
+def compute_ratio_inference(
+    log_ratio: np.ndarray,
+    var_log_ratio: np.ndarray,
+    relative_risk: float,
+    num_cell: int,
+    fdr_threshold: float,
+    ranking_statistic: FreqRankingStatistic,
+    decision_metric: DecisionMetric,
+    decision_thres: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    """Calculate Wald test p-values, zero-variance guards, 95% CIs, FDR, and signal counts for ratio metrics (PRR, ROR)."""
+    se_log = np.sqrt(np.maximum(var_log_ratio, 0.0))
+    zero_se = (se_log <= 0.0) | np.isnan(se_log)
+    safe_se = np.where(zero_se, 1.0, se_log)
+
+    null_val = np.log(relative_risk) if relative_risk > 0 else 0.0
+    pval_uni = 1.0 - norm.cdf(log_ratio, null_val, safe_se)
+    pval_uni = np.where(zero_se, np.where(log_ratio > null_val, 0.0, 1.0), pval_uni)
+    pval_uni = np.clip(np.nan_to_num(pval_uni, nan=1.0), 0.0, 1.0)
+
+    FDR = compute_fdr(pval_uni, num_cell, fdr_threshold)
+
+    z_crit = 1.959963984540054
+    log_LB = log_ratio - z_crit * se_log
+    log_UB = log_ratio + z_crit * se_log
+
+    log_LB = np.nan_to_num(log_LB, nan=-np.inf, posinf=np.inf, neginf=-np.inf)
+    log_UB = np.nan_to_num(log_UB, nan=np.inf, posinf=np.inf, neginf=-np.inf)
+
+    max_log_val = np.log(np.finfo(np.float64).max)
+    min_log_val = np.log(np.finfo(np.float64).tiny)
+    ci_upper = np.where(log_UB >= max_log_val, np.inf, np.exp(np.minimum(log_UB, max_log_val)))
+    ci_lower = np.where(log_LB <= min_log_val, 0.0, np.exp(np.maximum(log_LB, min_log_val)))
+
+    RankStat = pval_uni if ranking_statistic == "p_value" else ci_lower
+
+    num_signals = determine_num_signals(
+        FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
+    )
+
+    return RankStat, ci_lower, ci_upper, FDR, num_signals
+
+
+def build_bayesian_result(
+    DATA: pd.DataFrame,
+    count: np.ndarray,
+    expected: np.ndarray,
+    ranking_statistic: str,
+    rank_stat: np.ndarray,
+    posterior_probability: np.ndarray,
+    n1j: np.ndarray,
+    ni1: np.ndarray,
+    FDR: np.ndarray,
+    FNR: np.ndarray,
+    FOR: np.ndarray,
+    Se: np.ndarray,
+    Sp: np.ndarray,
+    num_signals: int,
+    params: dict[str, Any] | None = None,
+    extra_cols: dict[str, Any] | None = None,
+) -> AnalysisResult:
+    """Build the standardized AnalysisResult for Bayesian methods (GPS, BCPNN)."""
+    prod_vals = DATA["product_name"].values if "product_name" in DATA else DATA["Product"].values
+    ae_vals = DATA["ae_name"].values if "ae_name" in DATA else DATA["Adverse Event"].values
+
+    cols: dict[str, Any] = {
+        "Product": prod_vals,
+        "Adverse Event": ae_vals,
+        "Count": count,
+        "Expected Count": expected,
+    }
+
+    if ranking_statistic == "p_value":
+        cols["p_value"] = rank_stat
+        if extra_cols and "quantile" in extra_cols:
+            cols["quantile"] = extra_cols.pop("quantile")
+    elif ranking_statistic == "quantile":
+        cols["quantile"] = rank_stat
+        cols["posterior_probability"] = posterior_probability
+    elif ranking_statistic == "log2":
+        cols["log2"] = rank_stat
+        cols["p_value"] = posterior_probability
+    else:
+        cols[ranking_statistic] = rank_stat
+
+    cols["count/expected"] = np.where(expected > 0, count / expected, np.nan)
+
+    if extra_cols:
+        cols.update(extra_cols)
+
+    cols["product margin"] = n1j
+    cols["event margin"] = ni1
+    cols["fdr"] = FDR
+    cols["FNR"] = FNR
+    cols["FOR"] = FOR
+    cols["Se"] = Se
+    cols["Sp"] = Sp
+
+    ascending = (ranking_statistic == "p_value")
+    all_signals = pd.DataFrame(cols, index=np.arange(len(count))).sort_values(
+        by=[ranking_statistic], ascending=ascending
+    )
+    all_signals.index = np.arange(len(all_signals.index))
 
     return AnalysisResult(
         all_signals=all_signals,

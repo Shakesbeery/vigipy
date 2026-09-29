@@ -264,6 +264,68 @@ def convert_multi_item(df, product_label=None, ae_label="AE", count_label="count
     )
 
 
+def _mine_frequent_combinations(
+    X_single_csr: sp.csr_matrix,
+    single_drugs: list[str],
+    min_co_reports: int,
+    max_order: int,
+    target_set: Optional[set[str]] = None,
+) -> dict[tuple[int, ...], sp.csr_matrix]:
+    """Mine frequent multi-order drug combinations using Apriori downward closure.
+
+    Parameters:
+        X_single_csr: Sparse (reports x drugs) binary indicator matrix.
+        single_drugs: List of drug names corresponding to columns of X_single_csr.
+        min_co_reports: Minimum co-occurrence count required for inclusion.
+        max_order: Maximum combination size to mine (>= 2).
+        target_set: Optional set of drug names. If provided, candidate combinations
+            must include at least one target drug.
+
+    Returns:
+        Dictionary mapping sorted tuple of drug indices to sparse column vector of co-occurrences.
+    """
+    current_level_combos: dict[tuple[int, ...], sp.csr_matrix] = {}
+
+    # Order 2: Pairs via sparse Gram matrix
+    M_co = (X_single_csr.T @ X_single_csr).tocoo()
+    for j, k, count_val in zip(M_co.row, M_co.col, M_co.data):
+        if j < k and count_val >= min_co_reports:
+            d1, d2 = single_drugs[j], single_drugs[k]
+            if target_set is not None and (d1 not in target_set and d2 not in target_set):
+                continue
+            pair_col = X_single_csr[:, j].multiply(X_single_csr[:, k])
+            current_level_combos[(j, k)] = pair_col
+
+    all_combos: dict[tuple[int, ...], sp.csr_matrix] = dict(current_level_combos)
+
+    # Order 3 .. max_order: Downward closure extension
+    for order in range(3, max_order + 1):
+        prev_keys = list(current_level_combos.keys())
+        next_level_combos: dict[tuple[int, ...], sp.csr_matrix] = {}
+        n_prev = len(prev_keys)
+
+        for a in range(n_prev):
+            k1 = prev_keys[a]
+            for b in range(a + 1, n_prev):
+                k2 = prev_keys[b]
+                if k1[:-1] == k2[:-1] and k1[-1] < k2[-1]:
+                    candidate = k1 + (k2[-1],)
+                    cand_col = current_level_combos[k1].multiply(X_single_csr[:, k2[-1]])
+                    cand_count = cand_col.nnz
+                    if cand_count >= min_co_reports:
+                        cand_drugs = [single_drugs[idx] for idx in candidate]
+                        if target_set is not None and not any(d in target_set for d in cand_drugs):
+                            continue
+                        next_level_combos[candidate] = cand_col
+
+        all_combos.update(next_level_combos)
+        current_level_combos = next_level_combos
+        if not current_level_combos:
+            break
+
+    return all_combos
+
+
 def convert_ddi(
     data: pd.DataFrame,
     product_label: str = "name",
@@ -279,10 +341,20 @@ def convert_ddi(
 ) -> DataContainer:
     """Convert case-level report data into a Drug-Drug Interaction (DDI) DataContainer.
 
-    Identifies co-prescribed drug combinations (pairs, triplets, etc. up to max_order)
-    meeting a co-reporting threshold and generates interaction columns alongside
-    single-drug features. Produces a full DataContainer compatible with all vigipy
-    disproportionality methods (PRR, ROR, GPS, LASSO, SCORE-DA, and SCORE-DDI).
+    Clinical Intuition:
+        In post-marketing pharmacovigilance, patients are rarely exposed to just a single
+        medication. Polydrug regimens, polypharmacy in elderly cohorts, and multi-agent
+        chemotherapy commonly induce adverse events that do not occur with single agents.
+
+        While standard `convert_binary` models each drug independently, `convert_ddi`
+        discovers co-prescribed combinations directly from case-level spontaneous reports.
+        Using Apriori downward closure on patient report identifiers, it efficiently extracts
+        frequent drug pairs, triplets, and higher-order combinations without memory explosion.
+
+        The resulting container embeds both individual drug baselines and combinatorial
+        interaction entities into a unified design matrix. This allows either specialized
+        interaction models (e.g., `score_ddi`) or standard disproportionality algorithms
+        (`prr`, `ror`, `gps`, `lasso`) to analyze drug-drug synergy.
 
     Parameters:
         data: A DataFrame consisting of report-level product and adverse event occurrences.
@@ -340,44 +412,9 @@ def convert_ddi(
     target_set = set(target_drugs) if target_drugs is not None else None
 
     # Multi-order interaction mining using Apriori downward closure
-    current_level_combos: dict[tuple[int, ...], sp.csr_matrix] = {}
-
-    # Order 2: Pairs
-    M_co = (X_single_csr.T @ X_single_csr).tocoo()
-    for j, k, count_val in zip(M_co.row, M_co.col, M_co.data):
-        if j < k and count_val >= min_co_reports:
-            d1, d2 = single_drugs[j], single_drugs[k]
-            if target_set is not None and (d1 not in target_set and d2 not in target_set):
-                continue
-            pair_col = X_single_csr[:, j].multiply(X_single_csr[:, k])
-            current_level_combos[(j, k)] = pair_col
-
-    all_combos: dict[tuple[int, ...], sp.csr_matrix] = dict(current_level_combos)
-
-    # Order 3 .. max_order
-    for order in range(3, max_order + 1):
-        prev_keys = list(current_level_combos.keys())
-        next_level_combos: dict[tuple[int, ...], sp.csr_matrix] = {}
-        n_prev = len(prev_keys)
-
-        for a in range(n_prev):
-            k1 = prev_keys[a]
-            for b in range(a + 1, n_prev):
-                k2 = prev_keys[b]
-                if k1[:-1] == k2[:-1] and k1[-1] < k2[-1]:
-                    candidate = k1 + (k2[-1],)
-                    cand_col = current_level_combos[k1].multiply(X_single_csr[:, k2[-1]])
-                    cand_count = cand_col.nnz
-                    if cand_count >= min_co_reports:
-                        cand_drugs = [single_drugs[idx] for idx in candidate]
-                        if target_set is not None and not any(d in target_set for d in cand_drugs):
-                            continue
-                        next_level_combos[candidate] = cand_col
-
-        all_combos.update(next_level_combos)
-        current_level_combos = next_level_combos
-        if not current_level_combos:
-            break
+    all_combos = _mine_frequent_combinations(
+        X_single_csr, single_drugs, min_co_reports, max_order, target_set
+    )
 
     if not all_combos:
         msg = f"No drug combinations met the threshold of min_co_reports={min_co_reports}."

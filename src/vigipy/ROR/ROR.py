@@ -1,12 +1,10 @@
 import numpy as np
-from scipy.stats import norm
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils.types import DecisionMetric, FreqRankingStatistic, ExpectedMethod
 from ..utils.common import (
     extract_contingency_data,
-    compute_fdr,
-    determine_num_signals,
+    compute_ratio_inference,
     build_freq_result,
     build_params,
 )
@@ -26,8 +24,12 @@ def ror(
 ) -> AnalysisResult:
     """Calculate the Reporting Odds Ratio (ROR) for pharmacovigilance signal detection.
 
-    Computes the ROR and Woolf log-odds variance under a log-normal approximation,
-    deriving one-sided p-values and local Bayes false discovery rates (FDR).
+    Clinical Intuition:
+        ROR mirrors the classic case-control epidemiological odds ratio: it compares the
+        odds of reporting a specific adverse event for a given drug against the odds for all
+        other drugs. An ROR of 2.5 indicates that the odds of this reaction being reported
+        are 2.5-fold higher when exposed to the suspect drug. Woolf's log-odds standard
+        error provides stable confidence intervals across medium-to-large spontaneous cohorts.
 
     Parameters:
         container: A DataContainer holding event counts and marginal totals.
@@ -54,31 +56,10 @@ def ror(
 
     log_ror = np.log(d["n11"] * d["n00"] / (d["n10"] * d["n01"]))
     var_log_ror = 1.0 / d["n11"] + 1.0 / d["n10"] + 1.0 / d["n01"] + 1.0 / d["n00"]
-    se_log_ror = np.sqrt(np.maximum(var_log_ror, 0.0))
-    zero_se = (se_log_ror <= 0.0) | np.isnan(se_log_ror)
-    safe_se = np.where(zero_se, 1.0, se_log_ror)
-    pval_uni = 1.0 - norm.cdf(log_ror, np.log(relative_risk), safe_se)
-    pval_uni = np.where(zero_se, np.where(log_ror > np.log(relative_risk), 0.0, 1.0), pval_uni)
-    pval_uni = np.clip(np.nan_to_num(pval_uni, nan=1.0), 0.0, 1.0)
 
-    FDR = compute_fdr(pval_uni, d["num_cell"], fdr_threshold)
-
-    z_crit = 1.959963984540054
-    log_LB = log_ror - z_crit * se_log_ror
-    log_UB = log_ror + z_crit * se_log_ror
-
-    log_LB = np.nan_to_num(log_LB, nan=-np.inf, posinf=np.inf, neginf=-np.inf)
-    log_UB = np.nan_to_num(log_UB, nan=np.inf, posinf=np.inf, neginf=-np.inf)
-
-    max_log_val = np.log(np.finfo(np.float64).max)
-    min_log_val = np.log(np.finfo(np.float64).tiny)
-    ci_upper = np.where(log_UB >= max_log_val, np.inf, np.exp(np.minimum(log_UB, max_log_val)))
-    ci_lower = np.where(log_LB <= min_log_val, 0.0, np.exp(np.maximum(log_LB, min_log_val)))
-
-    RankStat = pval_uni if ranking_statistic == "p_value" else ci_lower
-
-    num_signals = determine_num_signals(
-        FDR, RankStat, decision_metric, decision_thres, ranking_statistic, d["num_cell"]
+    rank_stat, ci_lower, ci_upper, fdr, num_signals = compute_ratio_inference(
+        log_ror, var_log_ror, relative_risk, d["num_cell"], fdr_threshold,
+        ranking_statistic, decision_metric, decision_thres,
     )
 
     params = build_params("ror", {
@@ -90,8 +71,8 @@ def ror(
     })
 
     return build_freq_result(
-        d["DATA"], d.get("n11_raw", d["n11"]), d["expected"], RankStat,
+        d["DATA"], d.get("n11_raw", d["n11"]), d["expected"], rank_stat,
         np.exp(log_ror), "ROR",
-        d["n1j"], d["ni1"], FDR, ranking_statistic, num_signals, params,
+        d["n1j"], d["ni1"], fdr, ranking_statistic, num_signals, params,
         ci_lower=ci_lower, ci_upper=ci_upper,
     )

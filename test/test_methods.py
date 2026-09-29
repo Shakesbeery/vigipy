@@ -638,6 +638,30 @@ class TestLongitudinalModel:
         lm.regroup_dates("Q")
         assert lm.time_unit == "Q"
 
+    def test_to_dataframe_and_summary(self, sample_df):
+        lm = LongitudinalModel(sample_df.copy(), "A")
+        assert "unfitted" in repr(lm)
+        assert lm.to_dataframe().empty
+
+        lm.run(prr, False, min_events=1, decision_metric="signals", ranking_statistic="p_value")
+        assert "slices=" in repr(lm)
+
+        df_signals = lm.to_dataframe(which="signals")
+        assert isinstance(df_signals, pd.DataFrame)
+        if not df_signals.empty:
+            assert "date" in df_signals.columns
+            assert "Product" in df_signals.columns
+            assert "Adverse Event" in df_signals.columns
+
+        df_all = lm.to_dataframe(which="all")
+        assert isinstance(df_all, pd.DataFrame)
+        if not df_all.empty:
+            assert "date" in df_all.columns
+
+        df_summary = lm.summary()
+        assert len(df_summary) == len(df_signals)
+
+
 
 # ---------------------------------------------------------------------------
 # Unified Interface Tests

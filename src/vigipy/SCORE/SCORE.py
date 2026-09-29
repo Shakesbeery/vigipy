@@ -143,6 +143,123 @@ def _build_syndromic_laplacian(
     return L_norm, clusters
 
 
+def _extract_matrices_from_container(
+    container: DataContainer,
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
+    """Extract contingency matrix C (drugs x AEs) and AE co-occurrence matrix S (AEs x AEs)."""
+    if container.type in ("binary", "binary_report", "binary_count", "binary_ddi"):
+        X_df = container.product_features
+        Y_df = container.event_outcomes
+        products = list(X_df.columns)
+        events = list(Y_df.columns)
+
+        if hasattr(X_df, "sparse") or issparse(X_df):
+            X_mat = X_df.sparse.to_coo().tocsr() if hasattr(X_df, "sparse") else X_df.tocsr()
+        else:
+            X_mat = np.ascontiguousarray(X_df.values, dtype=np.float64)
+
+        if hasattr(Y_df, "sparse") or issparse(Y_df):
+            Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
+        else:
+            Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
+
+        if issparse(X_mat) or issparse(Y_mat):
+            C = (X_mat.T @ Y_mat).toarray()
+            S_cooccur = (Y_mat.T @ Y_mat).toarray()
+        else:
+            C = X_mat.T @ Y_mat
+            S_cooccur = Y_mat.T @ Y_mat
+
+    elif container.type == "contingency":
+        cont = container.contingency
+        products = list(cont.index)
+        events = list(cont.columns)
+        C = np.ascontiguousarray(cont.values, dtype=np.float64)
+        S_cooccur = C.T @ C
+    else:
+        raise ValueError(f"Unsupported container type '{container.type}' for SCORE.")
+
+    return C, S_cooccur, products, events
+
+
+def _compute_lipschitz_constant(L_ae: np.ndarray, syndromic_weight: float, seed: int = 42) -> float:
+    """Compute exact Lipschitz gradient constant bound via power iteration spectral norm."""
+    n_events = L_ae.shape[0]
+    rng = np.random.default_rng(seed)
+    v_init = rng.standard_normal(n_events)
+    v_norm = np.linalg.norm(v_init)
+    if v_norm > 0:
+        v_pi = v_init / v_norm
+        for _ in range(10):
+            v_next = L_ae @ v_pi
+            vn = np.linalg.norm(v_next)
+            if vn > 0:
+                v_pi = v_next / vn
+        lambda_max = float(v_pi.T @ (L_ae @ v_pi))
+    else:
+        lambda_max = 2.0
+    return 1.0 + lambda_max * float(syndromic_weight)
+
+
+def _estimate_low_rank_baseline(C_current: np.ndarray, effective_rank: int, seed: int = 42) -> np.ndarray:
+    """Estimate expected baseline rates absorbing indication/class confounding via randomized SVD on Pearson residuals."""
+    R_row = np.sum(C_current, axis=1)
+    C_col = np.sum(C_current, axis=0)
+    N_tot = float(np.sum(R_row))
+
+    if N_tot <= 0:
+        return np.full_like(C_current, 1e-4)
+
+    E_mat = np.outer(R_row, C_col) / N_tot
+    denom_var = E_mat * (1.0 - R_row[:, None] / N_tot) * (1.0 - C_col[None, :] / N_tot)
+    std_err_mat = np.sqrt(np.maximum(denom_var, 1e-6))
+    R_pears = (C_current - E_mat) / std_err_mat
+
+    n_drugs, n_events = C_current.shape
+    if effective_rank > 0 and min(n_drugs, n_events) > effective_rank:
+        try:
+            from sklearn.utils.extmath import randomized_svd
+            U, S_vals, Vt = randomized_svd(
+                R_pears, n_components=effective_rank, random_state=seed
+            )
+            R_low_rank = (U * S_vals) @ Vt
+            return np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
+        except Exception:
+            try:
+                U, S_vals, Vt = np.linalg.svd(R_pears, full_matrices=False)
+                R_low_rank = (U[:, :effective_rank] * S_vals[:effective_rank]) @ Vt[:effective_rank, :]
+                return np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
+            except Exception:
+                return np.maximum(1e-4, E_mat)
+    else:
+        return np.maximum(1e-4, E_mat)
+
+
+def _compute_bh_fdr(p_values: np.ndarray) -> np.ndarray:
+    """Compute Benjamini-Hochberg FDR adjusted q-values across candidate p-values."""
+    n_comparisons = len(p_values)
+    if n_comparisons == 0:
+        return np.empty(0, dtype=np.float64)
+    sort_idx = np.argsort(p_values)
+    sorted_p = p_values[sort_idx]
+    ranks = np.arange(1, n_comparisons + 1)
+    adj_p = np.minimum(1.0, sorted_p * n_comparisons / ranks)
+    adj_p = np.minimum.accumulate(adj_p[::-1])[::-1]
+    q_values = np.empty_like(adj_p)
+    q_values[sort_idx] = adj_p
+    return q_values
+
+
+def _classify_interaction_archetype(active_count: int, k_order: int) -> str:
+    """Classify the clinical synergy mechanism into an epidemiological archetype."""
+    if active_count == 0:
+        return "EMERGENT"
+    elif active_count < k_order:
+        return "POTENTIATED"
+    else:
+        return "TWO_HIT" if k_order == 2 else "MULTI_HIT"
+
+
 def score_da(
     container: DataContainer,
     latent_rank: int = 5,
@@ -158,9 +275,21 @@ def score_da(
 ) -> AnalysisResult:
     """Perform Syndromic Cellwise Outlier & Residual Estimation (SCORE-DA).
 
-    Blends low-rank baseline background estimation (absorbing drug class and indication
-    confounding) with report-level syndromic graph regularization (borrowing statistical
-    strength across co-occurring symptoms) and iterative deflation to eliminate masking.
+    Clinical Intuition:
+        Traditional disproportionality methods treat all symptoms independently and assume
+        uniform background reporting across drugs. In practice, clinical reality violates both:
+        drugs in the same class share indications (e.g. anti-diabetics associated with hyperglycemia),
+        and symptoms co-occur in clinical syndromes (e.g. urticaria, facial edema, hypotension in anaphylaxis).
+        Furthermore, blockbuster drugs (with millions of reports) artificially inflate background denominators,
+        masking true signals from smaller drugs.
+
+        SCORE-DA resolves all three:
+        1. Indication Absorption: Low-rank matrix factorization (SVD on Pearson residuals) absorbs
+           drug-class and indication confounding into the baseline null model.
+        2. Syndromic Borrowing: Report-level Graph Laplacian regularization borrows statistical
+           strength across co-occurring symptoms in syndromic clusters.
+        3. Masking Deflation: Iterative deflation removes signals from the contingency table, unmasking
+           hidden safety alerts suppressed by blockbuster competition.
 
     Parameters:
         container: A DataContainer holding binary report outcomes or a contingency table.
@@ -195,59 +324,13 @@ def score_da(
         "seed": seed,
     })
 
-    # 1. Ingestion: Extract contingency matrix C (J drugs x I AEs) and Co-occurrence S (I x I)
-    if container.type in ("binary", "binary_report", "binary_count", "binary_ddi"):
-        X_df = container.product_features
-        Y_df = container.event_outcomes
-        products = list(X_df.columns)
-        events = list(Y_df.columns)
-
-        if hasattr(X_df, "sparse") or issparse(X_df):
-            X_mat = X_df.sparse.to_coo().tocsr() if hasattr(X_df, "sparse") else X_df.tocsr()
-        else:
-            X_mat = np.ascontiguousarray(X_df.values, dtype=np.float64)
-
-        if hasattr(Y_df, "sparse") or issparse(Y_df):
-            Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
-        else:
-            Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
-
-        if issparse(X_mat) or issparse(Y_mat):
-            C = (X_mat.T @ Y_mat).toarray()
-            S_cooccur = (Y_mat.T @ Y_mat).toarray()
-        else:
-            C = X_mat.T @ Y_mat
-            S_cooccur = Y_mat.T @ Y_mat
-
-    elif container.type == "contingency":
-        cont = container.contingency
-        products = list(cont.index)
-        events = list(cont.columns)
-        C = np.ascontiguousarray(cont.values, dtype=np.float64)
-        S_cooccur = C.T @ C
-    else:
-        raise ValueError(f"Unsupported container type '{container.type}' for score_da.")
-
+    # 1. Ingestion: Extract contingency matrix C and Co-occurrence S
+    C, S_cooccur, products, events = _extract_matrices_from_container(container)
     n_drugs, n_events = C.shape
 
     # 2. Build Syndromic Graph Laplacian & Clusters
     L_ae, clusters = _build_syndromic_laplacian(S_cooccur)
-
-    # Compute exact spectral norm of L_ae via power iteration to get optimal Lipschitz constant
-    rng = np.random.default_rng(seed)
-    v_init = rng.standard_normal(n_events)
-    v_norm = np.linalg.norm(v_init)
-    if v_norm > 0:
-        v_pi = v_init / v_norm
-        for _ in range(10):
-            v_next = L_ae @ v_pi
-            vn = np.linalg.norm(v_next)
-            if vn > 0:
-                v_pi = v_next / vn
-        lambda_max = float(v_pi.T @ (L_ae @ v_pi))
-    else:
-        lambda_max = 2.0
-    L_lip = 1.0 + lambda_max * float(syndromic_weight)
+    L_lip = _compute_lipschitz_constant(L_ae, syndromic_weight, seed=seed)
 
     # 3. Iterative Deflation Loop to Eliminate Masking
     C_current = C.copy()
@@ -259,40 +342,7 @@ def score_da(
 
     for it in range(max(1, deflate_iterations)):
         logger.debug("SCORE-DA deflation iteration %d / %d", it + 1, deflate_iterations)
-        # Compute marginals on current (possibly deflated) counts
-        R_row = np.sum(C_current, axis=1)
-        C_col = np.sum(C_current, axis=0)
-        N_tot = float(np.sum(R_row))
-
-        if N_tot <= 0:
-            Lambda_baseline = np.full_like(C, 1e-4)
-            break
-
-        E_mat = np.outer(R_row, C_col) / N_tot
-
-        # Standardized Pearson residuals
-        denom_var = E_mat * (1.0 - R_row[:, None] / N_tot) * (1.0 - C_col[None, :] / N_tot)
-        std_err_mat = np.sqrt(np.maximum(denom_var, 1e-6))
-        R_pears = (C_current - E_mat) / std_err_mat
-
-        # Low-rank background factor absorption via randomized SVD
-        if effective_rank > 0 and min(n_drugs, n_events) > effective_rank:
-            try:
-                from sklearn.utils.extmath import randomized_svd
-                U, S_vals, Vt = randomized_svd(
-                    R_pears, n_components=effective_rank, random_state=seed
-                )
-                R_low_rank = (U * S_vals) @ Vt
-                Lambda_baseline = np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
-            except Exception:
-                try:
-                    U, S_vals, Vt = np.linalg.svd(R_pears, full_matrices=False)
-                    R_low_rank = (U[:, :effective_rank] * S_vals[:effective_rank]) @ Vt[:effective_rank, :]
-                    Lambda_baseline = np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
-                except Exception:
-                    Lambda_baseline = np.maximum(1e-4, E_mat)
-        else:
-            Lambda_baseline = np.maximum(1e-4, E_mat)
+        Lambda_baseline = _estimate_low_rank_baseline(C_current, effective_rank, seed=seed)
 
         # Target excess rate for each drug
         Y_target = C - Lambda_baseline
@@ -328,7 +378,7 @@ def score_da(
                     tol=tol,
                 )
 
-        # Deflate table for next iteration (guaranteed non-negative by box constraint)
+        # Deflate table for next iteration
         if it < deflate_iterations - 1:
             C_current = np.maximum(0.0, C - Theta_est)
 
@@ -337,7 +387,7 @@ def score_da(
     baseline_flat = Lambda_baseline.flatten()
     theta_flat = Theta_est.flatten()
 
-    # Exact null standard error under H_0: theta = 0 (Var(C) = Lambda)
+    # Null standard error under H_0: theta = 0 (Var(C) = Lambda)
     se_flat = np.sqrt(np.maximum(baseline_flat, 1e-6))
     z_scores = np.where(theta_flat > 0, theta_flat / se_flat, 0.0)
     p_values = np.where(z_scores > 0, 1.0 - stats.norm.cdf(z_scores), 1.0)
@@ -349,18 +399,11 @@ def score_da(
     ser_upper = theta_flat + z_crit * se_flat
 
     # Benjamini-Hochberg adjustment across all pairs
-    n_pairs = len(p_values)
-    sort_idx = np.argsort(p_values)
-    sorted_p = p_values[sort_idx]
-    ranks = np.arange(1, n_pairs + 1)
-    adj_p = np.minimum(1.0, sorted_p * n_pairs / ranks)
-    adj_p = np.minimum.accumulate(adj_p[::-1])[::-1]
-    q_values = np.empty_like(adj_p)
-    q_values[sort_idx] = adj_p
-
+    q_values = _compute_bh_fdr(p_values)
     srr_flat = np.where(baseline_flat > 0, counts_flat / np.maximum(baseline_flat, 1e-6), 1.0)
 
     # Build master records
+    n_pairs = len(p_values)
     prod_indices, event_indices = np.unravel_index(np.arange(n_pairs), (n_drugs, n_events))
     prod_names = [products[p] for p in prod_indices]
     event_names = [events[e] for e in event_indices]
@@ -402,6 +445,7 @@ def score_da(
     )
 
 
+
 def score_ddi(
     container: DataContainer,
     interaction_model: str = "multiplicative",
@@ -416,8 +460,27 @@ def score_ddi(
 ) -> AnalysisResult:
     """Perform SCORE-DDI (Syndromic Cellwise Outlier & Residual Estimation for Drug-Drug Interactions).
 
-    Evaluates supra-additive or supra-multiplicative adverse event risk for co-prescribed
-    drug pairs, regularized by a patient-level syndromic adverse event Graph Laplacian.
+    Clinical Intuition:
+        When patients take multiple medications simultaneously, adverse reactions can
+        occur through synergistic interactions that far exceed what either drug would
+        cause alone. SCORE-DDI determines whether a combination of medications produces
+        an adverse event rate significantly higher than expected under an independent
+        baseline model (either multiplicative or additive risk compounding).
+
+        Crucially, adverse drug reactions are rarely isolated biochemical events; they
+        frequently manifest as syndromic constellations of co-occurring symptoms (e.g.,
+        rash + eosinophilia + systemic symptoms in DRESS syndrome, or fever + rigidity
+        in neuroleptic malignant syndrome). SCORE-DDI couples all adverse events using
+        a patient-level Graph Laplacian, borrowing statistical strength across related
+        symptoms to boost signal detection for rare, life-threatening multi-organ toxicities.
+
+        Each detected interaction is classified into a clinical archetype:
+        - **EMERGENT**: Neither drug causes the reaction individually; the toxicity is
+          wholly unique to the combination (true pharmacological synergy).
+        - **POTENTIATED**: One drug is already known to cause the reaction, and the second
+          drug markedly amplifies its incidence or severity.
+        - **TWO-HIT / MULTI-HIT**: Both drugs independently trigger the toxicity, and their
+          concurrent administration produces a severe compound injury.
 
     Parameters:
         container: A DataContainer prepared via `convert_ddi(...)` or containing pair_mapping.
@@ -512,22 +575,7 @@ def score_ddi(
         S_cooccur = C_all.T @ C_all
 
     L_ae, clusters = _build_syndromic_laplacian(S_cooccur)
-
-    # Spectral norm via power iteration for exact Lipschitz bound
-    rng = np.random.default_rng(seed)
-    v_init = rng.standard_normal(n_events)
-    v_norm = np.linalg.norm(v_init)
-    if v_norm > 0:
-        v_pi = v_init / v_norm
-        for _ in range(10):
-            v_next = L_ae @ v_pi
-            vn = np.linalg.norm(v_next)
-            if vn > 0:
-                v_pi = v_next / vn
-        lambda_max = float(v_pi.T @ (L_ae @ v_pi))
-    else:
-        lambda_max = 2.0
-    L_lip = 1.0 + lambda_max * float(syndromic_weight)
+    L_lip = _compute_lipschitz_constant(L_ae, syndromic_weight, seed=seed)
 
     # 3. Compute baseline marginals across single drugs (to avoid double-counting pair rows)
     single_drugs = [d for d in cont.index if d not in pair_mapping]
@@ -593,12 +641,7 @@ def score_ddi(
                 (rr_list[d_idx][i] >= 2.0 and c_solo_list[d_idx][i] >= min_events)
                 for d_idx in range(k_order)
             )
-            if active_count == 0:
-                archetypes.append("EMERGENT")
-            elif active_count < k_order:
-                archetypes.append("POTENTIATED")
-            else:
-                archetypes.append("TWO_HIT" if k_order == 2 else "MULTI_HIT")
+            archetypes.append(_classify_interaction_archetype(active_count, k_order))
 
     # 5. Solve Box-Constrained FISTA for each pair
     if n_jobs != 1 and n_pairs > 1:
@@ -648,17 +691,11 @@ def score_ddi(
     ser_upper = theta_flat + z_crit * se_flat
 
     # Benjamini-Hochberg FDR
-    total_comparisons = len(p_values)
-    sort_idx = np.argsort(p_values)
-    sorted_p = p_values[sort_idx]
-    ranks = np.arange(1, total_comparisons + 1)
-    adj_p = np.minimum(1.0, sorted_p * total_comparisons / ranks)
-    adj_p = np.minimum.accumulate(adj_p[::-1])[::-1]
-    q_values = np.empty_like(adj_p)
-    q_values[sort_idx] = adj_p
+    q_values = _compute_bh_fdr(p_values)
 
     ddi_ratio = np.where(lam_flat > 0, counts_flat / np.maximum(lam_flat, 1e-6), 1.0)
 
+    total_comparisons = len(p_values)
     p_indices, e_indices = np.unravel_index(np.arange(total_comparisons), (n_pairs, n_events))
     p_names = [pair_names[p] for p in p_indices]
     components = [", ".join(pair_mapping[pair_names[p]]) for p in p_indices]

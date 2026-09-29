@@ -67,6 +67,30 @@ def _fit_longitudinal_slice(
 
 
 class LongitudinalModel:
+    """Longitudinal Pharmacovigilance Surveillance Model.
+
+    Clinical Intuition:
+        Adverse drug reactions do not occur in a static batch; they arrive sequentially
+        over months and years as patient exposure expands in the general population.
+        A drug may show no statistical disproportionality in year 1 with 50 reports, but
+        reach unequivocal statistical significance by year 3 with 500 reports.
+
+        Longitudinal modeling allows safety teams to simulate or execute prospective
+        surveillance:
+        - **Cumulative Surveillance (`run`)**: Replicates real-world post-marketing drug
+          safety monitoring. Slices data cumulatively up to each time boundary, evaluating
+          how evidence evolves over time and precisely when a safety signal first breached
+          significance thresholds (e.g. for Periodic Safety Update Reports / PSURs).
+        - **Disjoint Surveillance (`run_disjoint`)**: Analyzes discrete, non-overlapping
+          time intervals (e.g., quarterly or annual windows). Ideal for detecting transient
+          manufacturing batch anomalies, seasonal fluctuations, sudden label-change impacts,
+          or media-driven notoriety spikes.
+
+    Arguments:
+        dataframe: A dataframe containing counts, AEs, product/brands and AE dates.
+        time_unit: One of Pandas' time unit aliases (e.g. 'YE', 'QE', 'ME' or legacy 'A', 'Q', 'M').
+        count_col: Name of the event count column (defaults to 'count').
+    """
 
     CONVERSION_TYPES = {"base", "binary", "multi-item"}
 
@@ -76,14 +100,6 @@ class LongitudinalModel:
         time_unit: str,
         count_col: str = "count",
     ) -> None:
-        """
-        Initialize the longitudinal model with raw data and a time unit.
-
-        Arguments:
-            dataframe: A dataframe containing counts, AEs, product/brands and AE dates.
-            time_unit: One of Pandas' time unit aliases (e.g. 'YE', 'QE', 'ME' or legacy 'A', 'Q', 'M').
-            count_col: Name of the event count column (defaults to 'count').
-        """
         self.time_unit = time_unit
         self.data = dataframe.copy()
         self.data["date"] = pd.to_datetime(self.data["date"])
@@ -340,3 +356,52 @@ class LongitudinalModel:
         """
         self.time_unit = time_unit
         self.date_groups = self.data.resample(_normalize_time_unit(self.time_unit), on="date")
+
+    def to_dataframe(self, which: str = "signals") -> pd.DataFrame:
+        """Export longitudinal results into a tidy panel DataFrame.
+
+        Consolidates results across all evaluated time slices into a single DataFrame
+        with a leading 'date' column, facilitating time-series plotting, signal progression
+        tracking, and longitudinal alert monitoring.
+
+        Parameters:
+            which: Which signals table to extract ('signals' for alerted combinations,
+                or 'all' / 'all_signals' for the full combinatorial table). Defaults to 'signals'.
+
+        Returns:
+            A concatenated DataFrame sorted by date, or an empty DataFrame if no results exist.
+        """
+        if not self.results:
+            return pd.DataFrame()
+
+        which_key = "signals" if which in ("signals", "alert", "alerts") else "all_signals"
+        frames = []
+
+        for timestamp, res in self.results:
+            if res is None:
+                continue
+            table = getattr(res, which_key, None)
+            if table is not None and not table.empty:
+                df_slice = table.copy()
+                df_slice.insert(0, "date", timestamp)
+                frames.append(df_slice)
+
+        if not frames:
+            return pd.DataFrame()
+
+        return pd.concat(frames, ignore_index=True)
+
+    def summary(self) -> pd.DataFrame:
+        """Alias for to_dataframe(which='signals'). Returns all longitudinal alerts."""
+        return self.to_dataframe(which="signals")
+
+    def __repr__(self) -> str:
+        num_slices = len(self.results)
+        if num_slices == 0:
+            return f"<LongitudinalModel(time_unit='{self.time_unit}', status='unfitted')>"
+        valid_slices = [r for _, r in self.results if r is not None]
+        total_signals = sum(r.num_signals for r in valid_slices)
+        return (
+            f"<LongitudinalModel(time_unit='{self.time_unit}', slices={num_slices}, "
+            f"active_slices={len(valid_slices)}, total_alerts={total_signals})>"
+        )

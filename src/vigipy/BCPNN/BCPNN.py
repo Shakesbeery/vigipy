@@ -5,7 +5,12 @@ from scipy.stats import norm
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils import calculate_expected
-from ..utils.common import compute_bayesian_metrics, determine_num_signals, build_params
+from ..utils.common import (
+    compute_bayesian_metrics,
+    determine_num_signals,
+    build_params,
+    build_bayesian_result,
+)
 from ..utils.types import DecisionMetric, BCPNNRankingStatistic, ExpectedMethod
 
 
@@ -26,6 +31,14 @@ def bcpnn(
     Estimates the Information Component (IC) measuring dependency between a product
     and an adverse event. Supports both closed-form analytical approximations (via
     digamma/polygamma functions) and numerical Dirichlet Monte Carlo sampling.
+
+    Clinical Intuition:
+        BCPNN calculates the Information Component (IC), an information-theoretic measure
+        of mutual dependence. An IC of 0 indicates that the observed event rate equals expected
+        background independence, while an IC of +1 indicates twice as many reports as expected
+        (2^1 = 2). The 2.5% credibility lower bound (IC_025, or 'quantile') provides conservative
+        Bayesian shrinkage, protecting against false-positive alarms on low-count pairs. It serves
+        as the cornerstone surveillance method at the WHO Uppsala Monitoring Centre (UMC).
 
     Parameters:
         container: A DataContainer holding event counts and marginal totals.
@@ -142,56 +155,24 @@ def bcpnn(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, num_cell
     )
 
-    name = DATA["product_name"]
-    ae = DATA["ae_name"]
-    count = n11
+    params = build_params("bcpnn", input_params)
+    extra_cols = {"quantile": lower_bound} if ranking_statistic == "p_value" else {}
 
-    # SIGNALS RESULTS and presentation
-    if ranking_statistic == "p_value":
-        all_signals = pd.DataFrame(
-            {
-                "Product": name,
-                "Adverse Event": ae,
-                "Count": count,
-                "Expected Count": E,
-                "p_value": posterior_prob,
-                "quantile": lower_bound,
-                "count/expected": (count / E),
-                "product margin": n1j,
-                "event margin": ni1,
-                "fdr": FDR,
-                "FNR": FNR,
-                "FOR": FOR,
-                "Se": Se,
-                "Sp": Sp,
-            }
-        ).sort_values(by=[ranking_statistic])
-    else:
-        all_signals = pd.DataFrame(
-            {
-                "Product": name,
-                "Adverse Event": ae,
-                "Count": count,
-                "Expected Count": E,
-                "quantile": lower_bound,
-                "p_value": posterior_prob,
-                "count/expected": (count / E),
-                "product margin": n1j,
-                "event margin": ni1,
-                "fdr": FDR,
-                "FNR": FNR,
-                "FOR": FOR,
-                "Se": Se,
-                "Sp": Sp,
-            }
-        ).sort_values(by=[ranking_statistic], ascending=False)
-
-    all_signals.index = np.arange(len(all_signals.index))
-    signals = all_signals.iloc[0:num_signals]
-
-    return AnalysisResult(
-        all_signals=all_signals,
-        signals=signals,
+    return build_bayesian_result(
+        DATA,
+        count=n11,
+        expected=E,
+        ranking_statistic=ranking_statistic,
+        rank_stat=RankStat,
+        posterior_probability=posterior_prob,
+        n1j=n1j,
+        ni1=ni1,
+        FDR=FDR,
+        FNR=FNR,
+        FOR=FOR,
+        Se=Se,
+        Sp=Sp,
         num_signals=num_signals,
-        params=build_params("bcpnn", input_params),
+        params=params,
+        extra_cols=extra_cols,
     )

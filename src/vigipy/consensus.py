@@ -12,7 +12,7 @@ import pandas as pd
 
 from .analyze import analyze_all
 from .config import MethodConfig
-from .utils.Container import AnalysisResult, DataContainer
+from .utils.Container import AnalysisResult, DataContainer, _export_tabular_result
 
 
 # Candidate columns for primary disproportionality scores
@@ -287,32 +287,16 @@ class ConsensusResult:
         """
         path_str = os.fspath(filepath)
 
-        if path_str.endswith(".parquet"):
-            try:
-                if which == "signals":
-                    self.signals.to_parquet(path_str, index=index)
-                elif which == "all":
-                    self.comparison_table.to_parquet(path_str, index=index)
-                else:
-                    base, ext = os.path.splitext(path_str)
-                    self.signals.to_parquet(f"{base}_signals{ext}", index=index)
-                    self.comparison_table.to_parquet(f"{base}_comparison{ext}", index=index)
-                return
-            except (ImportError, ModuleNotFoundError) as exc:
-                raise ImportError(
-                    "Exporting to Parquet (.parquet) requires 'pyarrow' or 'fastparquet'. "
-                    "Install with 'pip install pyarrow' or 'pip install fastparquet'."
-                ) from exc
-
-        if path_str.endswith(".csv"):
-            if which == "signals":
-                self.signals.to_csv(path_str, index=index)
-            elif which == "all":
-                self.comparison_table.to_csv(path_str, index=index)
-            else:
-                base, ext = os.path.splitext(path_str)
-                self.signals.to_csv(f"{base}_signals{ext}", index=index)
-                self.comparison_table.to_csv(f"{base}_comparison{ext}", index=index)
+        if path_str.endswith(".parquet") or path_str.endswith(".pq") or path_str.endswith(".csv"):
+            _export_tabular_result(
+                self.signals,
+                self.comparison_table,
+                filepath,
+                primary_sheet="Consensus Signals",
+                secondary_sheet="Comparison Table",
+                which=which,
+                index=index,
+            )
             return
 
         try:
@@ -360,11 +344,27 @@ class ConsensusResult:
             return False
 
     def __repr__(self) -> str:
-        return (
-            f"ConsensusResult(num_signals={self.num_signals}, "
-            f"total_pairs={len(self.comparison_table)}, "
-            f"methods={self.methods})"
-        )
+        methods_str = ", ".join(self.methods)
+        total = len(self.comparison_table) if self.comparison_table is not None else 0
+        header = f"<ConsensusResult: {self.num_signals} consensus signal(s) from {len(self.methods)} methods [{methods_str}] (total pairs: {total})>"
+        if self.num_signals == 0 or self.signals is None or len(self.signals) == 0:
+            return header
+
+        top_n = min(3, len(self.signals))
+        lines = [header, "  Top Consensus Alerts:"]
+        for idx in range(top_n):
+            row = self.signals.iloc[idx]
+            prod = row.get("Product", "?")
+            ae = row.get("Adverse Event", "?")
+            votes = row.get("votes", "?")
+            score = row.get("consensus_score", None)
+            tier = row.get("agreement_tier", "")
+            score_str = f", score: {score:.2f}" if isinstance(score, (int, float, np.floating)) else ""
+            lines.append(f"    - {prod} | {ae} ({votes}/{len(self.methods)} votes{score_str}, tier: {tier})")
+
+        if self.num_signals > top_n:
+            lines.append(f"    ... and {self.num_signals - top_n} more consensus alert(s)")
+        return "\n".join(lines)
 
 
 def consensus_analysis(
@@ -375,6 +375,20 @@ def consensus_analysis(
     **shared_overrides: Any,
 ) -> ConsensusResult:
     """Compare and synthesize results across multiple disproportionality analysis (DA) methods.
+
+    Clinical Intuition:
+        No single disproportionality algorithm is universally superior across all pharmacovigilance
+        scenarios. Frequentist methods (PRR, ROR) provide raw, un-shrunk risk ratios favored by
+        some health authorities but are susceptible to high false-positive rates on rare events.
+        Empirical Bayes methods (GPS, BCPNN) shrink small-sample estimates toward the background
+        null, preventing false alarms but potentially delaying early detection of emerging risks.
+        Penalized regression (LASSO) controls for multi-drug co-prescription confounding, and
+        syndromic models (SCORE-DA) account for underlying indication bias and symptom clustering.
+
+        `consensus_analysis` operationalizes multi-method triage: drug-event pairs that trigger
+        alerts across multiple independent statistical paradigms represent high-confidence,
+        robust signals that warrant prioritized clinical review, whereas single-method outliers
+        can be flagged as sensitive or method-specific artifacts.
 
     Parameters:
         data: A DataContainer instance or a dictionary of pre-computed {method_name: AnalysisResult}.
