@@ -13,6 +13,7 @@ from .config import (
     BCPNNConfig,
     GPSConfig,
     LASSOConfig,
+    SCOREConfig,
 )
 from .utils.Container import AnalysisResult, DataContainer
 from .utils.types import MethodName
@@ -24,6 +25,7 @@ _METHOD_REGISTRY: dict[str, type] = {
     "bcpnn": BCPNNConfig,
     "gps": GPSConfig,
     "lasso": LASSOConfig,
+    "score": SCOREConfig,
 }
 
 
@@ -65,6 +67,9 @@ def analyze(container: DataContainer, config: MethodConfig) -> AnalysisResult:
     elif method_name == "lasso":
         from .LASSO import lasso
         return lasso(container, **params)
+    elif method_name == "score":
+        from .SCORE import score_da
+        return score_da(container, **params)
     else:
         raise ValueError(f"Unknown method: {method_name!r}")
 

@@ -220,5 +220,36 @@ class LASSOConfig:
     n_jobs: int = 1
 
 
-MethodConfig = Union[PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, LASSOConfig]
+@dataclass(frozen=True)
+class SCOREConfig:
+    """Configuration for SCORE-DA (Syndromic Cellwise Outlier & Residual Estimation).
+
+    Parameters:
+        latent_rank: Number of latent factors for background indication & drug class absorption.
+        syndromic_weight: Graph Laplacian coupling penalty (lambda_2 >= 0).
+        sparsity_param: L1 sparsity penalty (lambda_1 >= 0) on the excess signal rate.
+        fdr_threshold: Target False Discovery Rate (q-value) cutoff for signal detection.
+        deflate_iterations: Number of iterative deflation passes to remove masking/blockbuster bias.
+        min_events: Minimum observed event count required to qualify as a signal.
+        max_iter: Maximum number of FISTA iterations per drug.
+        tol: Convergence tolerance for FISTA.
+        n_jobs: Number of CPU worker processes.
+        seed: Random seed for reproducibility.
+    """
+
+    method: str = field(default="score", init=False)
+    latent_rank: int = 5
+    syndromic_weight: float = 0.5
+    sparsity_param: float = 1.0
+    fdr_threshold: float = 0.05
+    deflate_iterations: int = 2
+    min_events: int = 1
+    max_iter: int = 50
+    tol: float = 1e-4
+    n_jobs: int = 1
+    seed: int = 42
+
+
+MethodConfig = Union[PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, LASSOConfig, SCOREConfig]
+
 
