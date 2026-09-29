@@ -337,22 +337,40 @@ for timestamp, result in lm.results:
 
 ---
 
-## Result Exporting & Reporting
+## Result Exporting, Serialization & Logging
 
-All analysis methods return structured `AnalysisResult` objects with built-in export utilities:
+### Structured Result Container (`AnalysisResult` & `ConsensusResult`)
+All analysis methods return structured `AnalysisResult` (or `ConsensusResult`) objects with built-in export utilities supporting Excel, Parquet, and CSV:
 
 ```python
+from pathlib import Path
+import vigipy as vg
+
 result = vg.analyze(data, vg.GPSConfig(min_events=3))
 
 # Access primary attributes
 signals_df = result.signals       # Filtered signals meeting decision criteria
-all_df = result.all_signals       # Full candidate dataset with all computed metrics
+all_df = result.all_signals       # Full candidate dataset with all computed metrics (includes EBGM, LowerBound, UpperBound)
 num_alerts = result.num_signals   # Number of detected signals
 model_meta = result.params        # Audit trail of parameters used
 
-# Export to Excel (.xlsx) or CSV (.csv)
-result.export("safety_audit.xlsx")  # Creates 'Signals' and 'all_data' tabs
-result.export("signals_only.csv")   # Exports detected signals to CSV
+# Export to Excel (.xlsx), Parquet (.parquet), or CSV (.csv)
+# Accepts str or pathlib.Path
+result.export("safety_audit.xlsx")                   # Multi-tab workbook ('Signals' and 'all_data')
+result.export(Path("signals.parquet"))               # Fast, columnar Parquet export (default: which="signals")
+result.export("audit.parquet", which="both")          # Generates audit_signals.parquet & audit_all.parquet
+result.export("signals_only.csv")                    # Comma-separated signals export
+```
+
+### Logging & Diagnostics
+`vigipy` provides structured diagnostic logging via Python's standard `logging` library under the `"vigipy"` namespace:
+
+```python
+import logging
+
+# Configure vigipy to display solver iterations, SVD factorizations, and GLM diagnostics
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.getLogger("vigipy").setLevel(logging.DEBUG)
 ```
 
 ---
