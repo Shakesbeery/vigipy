@@ -7,6 +7,7 @@ from .LASSO import lasso
 from .utils import convert, convert_binary, convert_multi_item
 from .LongitudinalModel.LongitudinalModel import LongitudinalModel
 from .analyze import analyze, analyze_all, get_default_config
+from .consensus import consensus_analysis, ConsensusResult
 from .config import (
     PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, LASSOConfig,
     MethodConfig,
@@ -27,4 +28,6 @@ __all__ = [
     "PRRConfig", "RORConfig", "RFETConfig",
     "BCPNNConfig", "GPSConfig", "LASSOConfig",
     "MethodConfig",
+    # Consensus Analysis
+    "consensus_analysis", "ConsensusResult",
 ]
