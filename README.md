@@ -18,6 +18,7 @@
 * **Unified Interface**:
   * `analyze()` - Execute any disproportionality analysis via typed configuration dataclasses
   * `analyze_all()` - Run multiple analysis methods in a single call with shared or distinct parameters
+  * `consensus_analysis()` - Synthesize and compare findings across multiple DA methods with agreement scoring, concordance analytics, signal inspection, and multi-sheet reporting
   * `PRRConfig`, `RORConfig`, `RFETConfig`, `BCPNNConfig`, `GPSConfig`, `LASSOConfig` - Type-safe configuration dataclasses
 * **Disproportionality Methods**:
   * `prr()` - Proportional Reporting Ratio (frequentist log-normal approximation)
@@ -34,6 +35,7 @@
   * `convert_multi_item()` - Aggregate co-occurring product columns into multi-item interaction tables
 * **Result & Data Containers**:
   * `AnalysisResult` - Structured container for `signals`, `all_signals`, `num_signals`, and model `params`, with `.export()` to Excel or CSV
+  * `ConsensusResult` - Cross-method consensus container with merged comparison table, agreement metrics (Jaccard, Cohen's Kappa, Spearman, Overlap), `inspect_signal()`, and multi-tab `.export()`
   * `DataContainer` - Typed container holding contingency, event, product, and optional covariate matrices
 
 ---
@@ -126,6 +128,57 @@ for cfg in configs:
 bin_data = convert_binary(df, report_id_label="report_id", sparse=True)
 lasso_res = analyze(bin_data, LASSOConfig(min_events=3, relaxed=True, n_jobs=-1))
 print(f"LASSO: {lasso_res.num_signals} signals detected")
+```
+
+### Cross-Method Consensus Analysis (`consensus_analysis`)
+
+Synthesize and compare findings across multiple disproportionality analysis methods in a single call. `consensus_analysis` automatically aligns candidate pairs, tabulates alert votes and normalized consensus scores, assigns agreement tiers (`Unanimous`, `Strong`, `Moderate`, `Weak`, `Isolated`), evaluates method concordance matrices (Jaccard, Cohen's Kappa, Spearman rank correlation, Overlap), and provides signal drill-down inspection and multi-sheet Excel export:
+
+```python
+from vigipy import convert, consensus_analysis, PRRConfig, BCPNNConfig, GPSConfig
+
+df = pd.read_csv("AE_count_data.csv")
+data = convert(df)
+
+# 1. Run all default regulatory methods (PRR, ROR, RFET, BCPNN, GPS)
+# Filter consensus signals requiring agreement from at least 3 methods:
+consensus = consensus_analysis(data, min_events=3, min_consensus=3)
+
+print(f"Total evaluated pairs: {len(consensus.comparison_table)}")
+print(f"Consensus signals (>= 3 methods): {consensus.num_signals}")
+print(consensus.signals[["Product", "Adverse Event", "Count", "votes", "consensus_score", "agreement_tier"]].head())
+
+# 2. Inspect a specific signal across all methods
+detail = consensus.inspect_signal("DRUG_A", "CARDIAC_ARREST")
+print(detail)
+# Displays Method, Alert, Metric, Score, CI Lower, CI Upper, p-value, FDR, Count, Expected Count
+
+# 3. Inter-method agreement analytics
+print("Pairwise Jaccard Similarity:")
+print(consensus.method_agreement["jaccard"].round(3))
+
+print("Cohen's Kappa Inter-Rater Concordance:")
+print(consensus.method_agreement["kappa"].round(3))
+
+print("Spearman Rank Correlation of Primary Statistics:")
+print(consensus.method_agreement["correlation"].round(3))
+
+# 4. Generate a 2x2 alert contingency matrix between two methods
+print(consensus.contingency_table("prr", "gps"))
+
+# 5. Weighted consensus & custom method configurations
+# Weight Bayesian shrinkage higher than frequentist ratios:
+weighted_res = consensus_analysis(
+    data,
+    configs=[PRRConfig(), BCPNNConfig(), GPSConfig()],
+    weights={"gps": 2.0, "bcpnn": 2.0, "prr": 1.0},
+    min_consensus=0.6,   # Require normalized consensus score >= 60%
+)
+
+# 6. Multi-tab Excel export
+# Writes 'Consensus Signals', 'Comparison Table', 'Jaccard Similarity',
+# 'Cohens Kappa', 'Spearman Correlation', and 'Alert Overlap' sheets:
+consensus.export("consensus_report.xlsx")
 ```
 
 ### Classic Function API
