@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import scipy.stats as stats
 import statsmodels.api as sm
-from scipy.sparse import issparse, hstack
+from scipy.sparse import issparse, hstack, diags, csr_matrix
 from sklearn.linear_model import (
     Lasso,
     LassoLars,
@@ -205,22 +205,28 @@ def _fit_single_adverse_event(
             else:
                 relaxed_coefs = relaxed_coefs_all
 
-            if issparse(M_stage2):
-                M_dense = M_stage2.toarray()
-            else:
-                M_dense = M_stage2
-
-            p_pred = np.clip(clf_relaxed.predict_proba(M_dense)[:, 1], 1e-6, 1 - 1e-6)
+            p_pred = np.clip(clf_relaxed.predict_proba(M_stage2)[:, 1], 1e-6, 1 - 1e-6)
             w = p_pred * (1 - p_pred)
 
-            if fit_int:
-                M_inf = np.column_stack([np.ones(n_samples), M_dense])
-                offset = 1 + (Z_mat.shape[1] if Z_mat is not None else 0)
+            if issparse(M_stage2):
+                if fit_int:
+                    ones_col = csr_matrix(np.ones((n_samples, 1), dtype=np.float64))
+                    M_inf = hstack([ones_col, M_stage2], format="csr")
+                    offset = 1 + (Z_mat.shape[1] if Z_mat is not None else 0)
+                else:
+                    M_inf = M_stage2
+                    offset = Z_mat.shape[1] if Z_mat is not None else 0
+                W_diag = diags(w)
+                H = (M_inf.T @ W_diag @ M_inf).toarray()
             else:
-                M_inf = M_dense
-                offset = Z_mat.shape[1] if Z_mat is not None else 0
+                if fit_int:
+                    M_inf = np.column_stack([np.ones(n_samples), M_stage2])
+                    offset = 1 + (Z_mat.shape[1] if Z_mat is not None else 0)
+                else:
+                    M_inf = M_stage2
+                    offset = Z_mat.shape[1] if Z_mat is not None else 0
+                H = M_inf.T @ (w[:, None] * M_inf)
 
-            H = M_inf.T @ (w[:, None] * M_inf)
             V = np.linalg.pinv(H, rcond=1e-7)
             active_se = np.sqrt(np.maximum(np.diag(V)[offset:], 1e-8))
 
@@ -354,11 +360,38 @@ def _fit_single_adverse_event(
             X_arr_dense = X_mat.toarray()
         else:
             X_arr_dense = X_mat
-        nb = sm.GLM(y, X_arr_dense, family=sm.families.NegativeBinomial(alpha=nb_alpha))
+
+        is_partition = bool(np.allclose(np.sum(X_arr_dense, axis=1), 1.0))
+        if not is_partition:
+            X_design = sm.add_constant(X_arr_dense, prepend=True)
+            offset = 1
+        else:
+            X_design = X_arr_dense
+            offset = 0
+
+        nb = sm.GLM(y, X_design, family=sm.families.NegativeBinomial(alpha=nb_alpha))
         results = nb.fit_regularized(L1_wt=1, alpha=lasso_alpha)
-        all_coefs = np.clip(results.params.copy(), 0, None)
+        raw_params = results.params.copy()
+        drug_params = raw_params[offset:]
+        all_coefs = np.clip(drug_params, 0, None)
+
+        active_mask = all_coefs > 1e-6
         ci_l = np.zeros(len(all_coefs))
         ci_u = np.zeros(len(all_coefs))
+        if np.any(active_mask):
+            try:
+                if offset > 0:
+                    act_cols = np.where(active_mask)[0] + offset
+                    X_act = X_design[:, np.concatenate([[0], act_cols])]
+                else:
+                    X_act = X_design[:, active_mask]
+                refit = sm.GLM(y, X_act, family=sm.families.NegativeBinomial(alpha=nb_alpha)).fit(disp=False)
+                act_se = refit.bse[offset:]
+                ci_l[active_mask] = all_coefs[active_mask] - z_crit * act_se
+                ci_u[active_mask] = all_coefs[active_mask] + z_crit * act_se
+            except Exception:
+                ci_l[active_mask] = all_coefs[active_mask]
+                ci_u[active_mask] = all_coefs[active_mask]
 
         for idx, product in enumerate(products):
             res_dict["Product"].append(product)

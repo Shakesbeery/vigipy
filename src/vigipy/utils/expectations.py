@@ -1,3 +1,4 @@
+import logging
 import warnings
 
 import numpy as np
@@ -6,6 +7,8 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
 from statsmodels.tools.sm_exceptions import PerfectSeparationError
+
+logger = logging.getLogger("vigipy")
 
 
 def __cameron_trivedi_dispersion(df_row):
@@ -47,7 +50,7 @@ def __test_dispersion(model, data):
     """
     y = np.asarray(data["events"], dtype=np.float64)
     m = np.asarray(model.mu, dtype=np.float64)
-    response = ((y - m) ** 2 - y) / m
+    response = ((y - m) ** 2 - y) / np.maximum(m, 1e-7)
     ols_data = pd.DataFrame({"response": response, "mu": m})
     results = smf.ols("response ~ mu - 1", ols_data).fit()
 
@@ -84,19 +87,25 @@ def __stats_method(n1j, ni1, n11, family):
 
     """
     data = pd.DataFrame({"events": n11, "prod_events": n1j, "ae_events": ni1})
-    model = smf.glm(formula="events ~ prod_events+ae_events", data=data, family=family)
+    data["log_prod"] = np.log(np.maximum(data["prod_events"], 1.0))
+    data["log_ae"] = np.log(np.maximum(data["ae_events"], 1.0))
+    model = smf.glm(formula="events ~ log_prod + log_ae", data=data, family=family)
     model = model.fit()
 
     if isinstance(family, sm.families.Poisson):
-        dispersion = model.pearson_chi2 / model.df_resid
+        dispersion = model.pearson_chi2 / max(model.df_resid, 1)
         if dispersion > 2:
             alpha, lb, ub = __test_dispersion(model, data)
             warning_string = f"""Variance does not equal the mean! Data likely overdispersed...\n
                                 Consider utilizing the negative-binomial family instead of poisson.\n
                                 Cameron-Trivedi alpha: {alpha:5.4f}, CI: ({lb}, {ub})"""
             warnings.warn(warning_string)
+            logger.warning(
+                "Overdispersion detected in Poisson GLM: Cameron-Trivedi alpha=%.4f (CI: %.4f, %.4f)",
+                alpha, lb, ub,
+            )
 
-    return model.predict(data[["prod_events", "ae_events"]]).values
+    return model.predict(data[["log_prod", "log_ae"]]).values
 
 
 def test_dispersion(container):
@@ -115,13 +124,15 @@ def test_dispersion(container):
 
     """
     sub_frame = container.data[["events", "product_aes", "count_across_brands"]].copy()
+    sub_frame["log_product_aes"] = np.log(np.maximum(sub_frame["product_aes"], 1.0))
+    sub_frame["log_count_across_brands"] = np.log(np.maximum(sub_frame["count_across_brands"], 1.0))
     model = smf.glm(
-        formula="events ~ product_aes+count_across_brands",
+        formula="events ~ log_product_aes + log_count_across_brands",
         data=sub_frame,
         family=sm.families.Poisson(),
     )
     model = model.fit()
-    dispersion = model.pearson_chi2 / model.df_resid
+    dispersion = model.pearson_chi2 / max(model.df_resid, 1)
     alpha, lb, ub = __test_dispersion(model, sub_frame)
     return {"dispersion": dispersion, "alpha": alpha, "lb": lb, "ub": ub}
 

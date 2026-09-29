@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any, Union
 
@@ -268,22 +269,54 @@ class ConsensusResult:
         )
         return ct
 
-    def export(self, filepath: str, index: bool = False) -> None:
+    def export(
+        self,
+        filepath: Union[str, os.PathLike],
+        index: bool = False,
+        which: str = "signals",
+    ) -> None:
         """Export consensus signals, comparison table, and method agreement matrices.
 
         Parameters:
-            filepath: Output filepath. If the path ends with '.csv', signals are exported
-                to CSV format. If '.xlsx', writes a multi-sheet workbook including
+            filepath: Output filepath or PathLike. If '.parquet', exports to Apache Parquet format.
+                If '.csv', exports to CSV. If '.xlsx', writes a multi-sheet workbook including
                 'Consensus Signals', 'Comparison Table', and agreement matrices.
             index: Whether to write row index labels to the output file (for signals/comparison).
                 Agreement matrices are always exported with method names as index labels.
+            which: Which table(s) to export for CSV/Parquet ('signals', 'all', or 'both'). Default 'signals'.
         """
-        if filepath.endswith(".csv"):
-            self.signals.to_csv(filepath, index=index)
+        path_str = os.fspath(filepath)
+
+        if path_str.endswith(".parquet"):
+            try:
+                if which == "signals":
+                    self.signals.to_parquet(path_str, index=index)
+                elif which == "all":
+                    self.comparison_table.to_parquet(path_str, index=index)
+                else:
+                    base, ext = os.path.splitext(path_str)
+                    self.signals.to_parquet(f"{base}_signals{ext}", index=index)
+                    self.comparison_table.to_parquet(f"{base}_comparison{ext}", index=index)
+                return
+            except (ImportError, ModuleNotFoundError) as exc:
+                raise ImportError(
+                    "Exporting to Parquet (.parquet) requires 'pyarrow' or 'fastparquet'. "
+                    "Install with 'pip install pyarrow' or 'pip install fastparquet'."
+                ) from exc
+
+        if path_str.endswith(".csv"):
+            if which == "signals":
+                self.signals.to_csv(path_str, index=index)
+            elif which == "all":
+                self.comparison_table.to_csv(path_str, index=index)
+            else:
+                base, ext = os.path.splitext(path_str)
+                self.signals.to_csv(f"{base}_signals{ext}", index=index)
+                self.comparison_table.to_csv(f"{base}_comparison{ext}", index=index)
             return
 
         try:
-            with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
+            with pd.ExcelWriter(path_str, engine="openpyxl") as writer:
                 self.signals.to_excel(
                     writer, sheet_name="Consensus Signals", index=index
                 )
@@ -311,6 +344,20 @@ class ConsensusResult:
                 "Exporting to Excel (.xlsx) requires 'openpyxl'. "
                 "Install it with 'pip install openpyxl' or 'pip install vigipy[excel]'."
             ) from exc
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ConsensusResult):
+            return False
+        if self.num_signals != other.num_signals:
+            return False
+        if self.params != other.params:
+            return False
+        try:
+            pd.testing.assert_frame_equal(self.signals, other.signals)
+            pd.testing.assert_frame_equal(self.comparison_table, other.comparison_table)
+            return True
+        except (AssertionError, ValueError):
+            return False
 
     def __repr__(self) -> str:
         return (

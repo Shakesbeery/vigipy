@@ -243,10 +243,19 @@ def gps(
     dg2 = digamma(priors[2] + n11)
     dgterm2 = dg2 - np.log(np.maximum(priors[3] + expected, 1e-10))
     EBlog2 = (np.log(2) ** -1) * (Qn * dgterm1 + (1 - Qn) * dgterm2)
+    ebgm = np.power(2.0, np.asarray(EBlog2, dtype=np.float64))
 
-    # Calculation of the Lower Bound.
+    # Calculation of the Lower Bound (EB05) and Upper Bound (EB95)
     LB = quantiles(
         0.05,
+        Qn,
+        priors[0] + n11,
+        priors[1] + expected,
+        priors[2] + n11,
+        priors[3] + expected,
+    )
+    UB = quantiles(
+        0.95,
         Qn,
         priors[0] + n11,
         priors[1] + expected,
@@ -285,6 +294,9 @@ def gps(
                 "Expected Count": expected,
                 "p_value": RankStat,
                 "count/expected": np.where(expected > 0, count / expected, np.nan),
+                "EBGM": ebgm,
+                "LowerBound": LB,
+                "UpperBound": UB,
                 "product margin": n1j,
                 "event margin": ni1,
                 "fdr": FDR,
@@ -304,6 +316,9 @@ def gps(
                 "Expected Count": expected,
                 "quantile": RankStat,
                 "count/expected": np.where(expected > 0, count / expected, np.nan),
+                "EBGM": ebgm,
+                "LowerBound": LB,
+                "UpperBound": UB,
                 "product margin": n1j,
                 "event margin": ni1,
                 "fdr": FDR,
@@ -323,6 +338,9 @@ def gps(
                 "Expected Count": expected,
                 "log2": RankStat,
                 "count/expected": np.where(expected > 0, count / expected, np.nan),
+                "EBGM": ebgm,
+                "LowerBound": LB,
+                "UpperBound": UB,
                 "product margin": n1j,
                 "event margin": ni1,
                 "fdr": FDR,
@@ -330,7 +348,6 @@ def gps(
                 "FOR": FOR,
                 "Se": Se,
                 "Sp": Sp,
-                "LowerBound": LB,
                 "p_value": posterior_probability,
             }
         ).sort_values(by=[ranking_statistic], ascending=False)

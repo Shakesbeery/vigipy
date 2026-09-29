@@ -68,6 +68,13 @@ def compute_contingency(data_frame, product_label, count_label, ae_label, margin
     Returns:
         pd.DataFrame: A contingency table with adverse events as columns and products as rows.
     """
+    if margin_threshold > 1:
+        prod_totals = data_frame.groupby(product_label, observed=True)[count_label].sum()
+        ae_totals = data_frame.groupby(ae_label, observed=True)[count_label].sum()
+        valid_prods = prod_totals[prod_totals >= margin_threshold].index
+        valid_aes = ae_totals[ae_totals >= margin_threshold].index
+        data_frame = data_frame[data_frame[product_label].isin(valid_prods) & data_frame[ae_label].isin(valid_aes)]
+
     # Create a contingency table based on the brands and AEs
     data_cont = pd.pivot_table(
         data_frame,
@@ -492,9 +499,10 @@ def _build_sparse_crosstab(data, index_label, column_label):
     col_cat = pd.Categorical(data[column_label])
     row_codes = idx_cat.codes
     col_codes = col_cat.codes
-    ones = np.ones(len(row_codes), dtype=np.float64)
+    valid_mask = (row_codes >= 0) & (col_codes >= 0)
+    ones = np.ones(valid_mask.sum(), dtype=np.float64)
     csr = sp.coo_matrix(
-        (ones, (row_codes, col_codes)),
+        (ones, (row_codes[valid_mask], col_codes[valid_mask])),
         shape=(len(idx_cat.categories), len(col_cat.categories)),
     ).tocsr()
     # Clip to binary (co-occurrence → 0/1)
@@ -565,23 +573,13 @@ def _extract_covariates(data, report_id_label, covariate_labels, common_idx):
 
 
 def __expand_dataframe(df, count_label, ae_label, product_label):
-    new = defaultdict(list)
-    for row in df.itertuples(index=False):
-        for _ in range(int(getattr(row, count_label))):
-            new[product_label].append(getattr(row, product_label))
-            new[ae_label].append(getattr(row, ae_label))
-            new[count_label].append(1)
-
-    new_data = pd.DataFrame(new)
-    return new_data
+    counts = df[count_label].astype(int)
+    expanded = df.loc[df.index.repeat(counts), [product_label, ae_label]].copy()
+    expanded[count_label] = 1
+    return expanded.reset_index(drop=True)
 
 
 def __transform_dataframe(df, count_label, ae_label):
-    # Create a new dataframe with unique values from 'AE' as columns, and initialize all cells with 0
-    new_df = pd.DataFrame(0, index=range(len(df)), columns=df[ae_label].unique())
-
-    # Iterate through the rows and set the appropriate value from 'count' in the corresponding 'AE' column
-    for i, row in df.iterrows():
-        new_df.at[i, row[ae_label]] = row[count_label]
-
-    return new_df
+    cols = df[ae_label].unique()
+    dummies = pd.get_dummies(df[ae_label], prefix="", prefix_sep="")[cols]
+    return dummies.multiply(df[count_label], axis=0).astype(int)

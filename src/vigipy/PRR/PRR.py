@@ -55,8 +55,11 @@ def prr(
     log_prr = np.log((d["n11"] / (d["n11"] + d["n10"])) / (d["n01"] / (d["n01"] + d["n00"])))
     var_log_prr = 1 / d["n11"] - 1 / (d["n11"] + d["n10"]) + 1 / d["n01"] - 1 / (d["n01"] + d["n00"])
     se_log_prr = np.sqrt(np.maximum(var_log_prr, 0.0))
-    pval_uni = 1 - norm.cdf(log_prr, np.log(relative_risk), se_log_prr)
-    pval_uni = np.clip(pval_uni, 0, 1)
+    zero_se = (se_log_prr <= 0.0) | np.isnan(se_log_prr)
+    safe_se = np.where(zero_se, 1.0, se_log_prr)
+    pval_uni = 1.0 - norm.cdf(log_prr, np.log(relative_risk), safe_se)
+    pval_uni = np.where(zero_se, np.where(log_prr > np.log(relative_risk), 0.0, 1.0), pval_uni)
+    pval_uni = np.clip(np.nan_to_num(pval_uni, nan=1.0), 0.0, 1.0)
 
     FDR = compute_fdr(pval_uni, d["num_cell"], fdr_threshold)
 
@@ -72,7 +75,7 @@ def prr(
     ci_upper = np.where(log_UB >= max_log_val, np.inf, np.exp(np.minimum(log_UB, max_log_val)))
     ci_lower = np.where(log_LB <= min_log_val, 0.0, np.exp(np.maximum(log_LB, min_log_val)))
 
-    RankStat = pval_uni if ranking_statistic == "p_value" else log_LB
+    RankStat = pval_uni if ranking_statistic == "p_value" else ci_lower
 
     num_signals = determine_num_signals(
         FDR, RankStat, decision_metric, decision_thres, ranking_statistic, d["num_cell"]

@@ -276,7 +276,7 @@ def build_freq_result(
     if ranking_statistic == "CI":
         all_signals = all_signals.rename(
             columns={"p_value": "lower_bound_CI(95%)"}
-        ).sort_values(by=["lower_bound_CI(95%)"])
+        ).sort_values(by=["lower_bound_CI(95%)"], ascending=False)
 
     return AnalysisResult(
         all_signals=all_signals,

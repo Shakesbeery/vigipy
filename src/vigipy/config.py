@@ -41,7 +41,7 @@ class PRRConfig:
         continuity_correction: Apply Haldane-Anscombe correction (+0.5) to contingency tables with zero cells.
     """
 
-    method: str = field(default="prr", init=False)
+    method: str = "prr"
     relative_risk: float = 1
     min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
@@ -69,7 +69,7 @@ class RORConfig:
         continuity_correction: Apply Haldane-Anscombe correction (+0.5) to contingency tables with zero cells.
     """
 
-    method: str = field(default="ror", init=False)
+    method: str = "ror"
     relative_risk: float = 1
     min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
@@ -97,7 +97,7 @@ class RFETConfig:
         fdr_threshold: Target FDR level for local Bayes estimation.
     """
 
-    method: str = field(default="rfet", init=False)
+    method: str = "rfet"
     min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
     decision_thres: float = 0.05
@@ -123,7 +123,7 @@ class BCPNNConfig:
         method_alpha: Dispersion parameter for negative binomial expected count model.
     """
 
-    method: str = field(default="bcpnn", init=False)
+    method: str = "bcpnn"
     relative_risk: float = 1
     min_events: int = 3
     decision_metric: DecisionMetric = "rank"
@@ -156,7 +156,7 @@ class GPSConfig:
         minimization_options: Solver-specific options dictionary passed to scipy.optimize.minimize.
     """
 
-    method: str = field(default="gps", init=False)
+    method: str = "gps"
     relative_risk: float = 1
     min_events: int = 3
     decision_metric: DecisionMetric = "rank"
@@ -197,7 +197,7 @@ class LASSOConfig:
             1 for sequential (default). Only used when family='logistic'.
     """
 
-    method: str = field(default="lasso", init=False)
+    method: str = "lasso"
     lasso_thresh: float = 0
     alpha: float = 0.5
     min_events: int = 3
@@ -237,7 +237,7 @@ class SCOREConfig:
         seed: Random seed for reproducibility.
     """
 
-    method: str = field(default="score", init=False)
+    method: str = "score"
     latent_rank: int = 5
     syndromic_weight: float = 0.5
     sparsity_param: float = 1.0
@@ -266,7 +266,7 @@ class SCOREDDIConfig:
         seed: Random seed for reproducibility.
     """
 
-    method: str = field(default="score_ddi", init=False)
+    method: str = "score_ddi"
     interaction_model: str = "multiplicative"
     syndromic_weight: float = 0.5
     sparsity_param: float = 1.0

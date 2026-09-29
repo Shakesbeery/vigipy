@@ -1,3 +1,5 @@
+import logging
+
 from .PRR import prr
 from .ROR import ror
 from .RFET import rfet
@@ -14,10 +16,14 @@ from .config import (
     SCOREConfig, SCOREDDIConfig, MethodConfig,
 )
 
+logger = logging.getLogger("vigipy")
+logger.addHandler(logging.NullHandler())
+
 __version__ = "3.3.1"
 
 __all__ = [
     "__version__",
+    "logger",
     # Original function API
     "prr", "ror", "rfet", "gps", "bcpnn", "lasso", "score_da", "score_ddi",
     # Data conversion

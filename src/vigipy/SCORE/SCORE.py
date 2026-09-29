@@ -12,6 +12,7 @@ A novel pattern discovery and signal detection framework that blends:
 
 from __future__ import annotations
 
+import logging
 from typing import Optional, Union
 import numpy as np
 import pandas as pd
@@ -20,6 +21,8 @@ from scipy.sparse import issparse, csr_matrix
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils.common import build_params
+
+logger = logging.getLogger("vigipy")
 
 
 def _solve_fista_single_drug(
@@ -114,13 +117,26 @@ def _build_syndromic_laplacian(
 
     # Spectral syndrome clustering: use Fiedler vector / second smallest eigenvector
     try:
-        vals, vecs = np.linalg.eigh(L_norm)
-        if n_events >= 4 and len(vals) > 2:
-            v1 = vecs[:, 1]
-            v2 = vecs[:, 2]
-            clusters = (v1 > 0).astype(int) + 2 * (v2 > 0).astype(int)
-        else:
+        if n_events >= 4:
+            from scipy.sparse.linalg import eigsh
+            k = min(3, n_events - 1)
+            vals, vecs = eigsh(csr_matrix(L_norm), k=k, which="SM")
+            sort_order = np.argsort(vals)
+            vals = vals[sort_order]
+            vecs = vecs[:, sort_order]
+            if k >= 3:
+                v1 = vecs[:, 1]
+                v2 = vecs[:, 2]
+                clusters = (v1 > 0).astype(int) + 2 * (v2 > 0).astype(int)
+            elif k >= 2:
+                clusters = (vecs[:, 1] > 0).astype(int)
+            else:
+                clusters = np.zeros(n_events, dtype=int)
+        elif n_events > 1:
+            vals, vecs = np.linalg.eigh(L_norm)
             clusters = (vecs[:, 1] > 0).astype(int) if len(vals) > 1 else np.zeros(n_events, dtype=int)
+        else:
+            clusters = np.zeros(n_events, dtype=int)
     except Exception:
         clusters = np.zeros(n_events, dtype=int)
 
@@ -239,8 +255,10 @@ def score_da(
     Lambda_baseline = np.zeros_like(C)
 
     effective_rank = min(latent_rank, max(0, min(n_drugs, n_events) - 1))
+    logger.debug("SCORE-DA: fitting %d drugs, %d events, effective rank %d", n_drugs, n_events, effective_rank)
 
     for it in range(max(1, deflate_iterations)):
+        logger.debug("SCORE-DA deflation iteration %d / %d", it + 1, deflate_iterations)
         # Compute marginals on current (possibly deflated) counts
         R_row = np.sum(C_current, axis=1)
         C_col = np.sum(C_current, axis=0)
@@ -554,7 +572,7 @@ def score_ddi(
             r_solo = np.sum(c_solo)
             e_solo = (r_solo * C_ae) / N_tot if r_solo > 0 else np.full(n_events, 1e-4)
             rr = np.where(e_solo > 0, c_solo / np.maximum(e_solo, 1e-6), 1.0)
-            rr_list.append(np.maximum(1.0, rr))
+            rr_list.append(np.maximum(1e-6, rr))
             c_solo_list.append(c_solo)
 
         if interaction_model == "multiplicative":
@@ -563,7 +581,7 @@ def score_ddi(
                 rr_null *= rr_item
         else:
             rr_sum = np.sum(rr_list, axis=0)
-            rr_null = np.maximum(1.0, rr_sum - (k_order - 1.0))
+            rr_null = np.maximum(1e-6, rr_sum - (k_order - 1.0))
 
         lam_null = np.maximum(1e-4, e_p * rr_null)
         Lambda_null[p_idx, :] = lam_null
