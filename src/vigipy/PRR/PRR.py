@@ -1,12 +1,10 @@
 import numpy as np
-from scipy.stats import norm
 
 from ..utils.Container import AnalysisResult, DataContainer
 from ..utils.types import DecisionMetric, FreqRankingStatistic, ExpectedMethod
 from ..utils.common import (
     extract_contingency_data,
-    compute_fdr,
-    determine_num_signals,
+    compute_ratio_inference,
     build_freq_result,
     build_params,
 )
@@ -26,8 +24,11 @@ def prr(
 ) -> AnalysisResult:
     """Calculate the Proportional Reporting Ratio (PRR) for pharmacovigilance signal detection.
 
-    Computes the PRR and associated variance under a log-normal approximation, deriving
-    one-sided p-values and local Bayes false discovery rates (FDR).
+    Clinical Intuition:
+        PRR compares the proportion of an adverse event among reports for a specific drug
+        against the proportion of that same event across all other drugs. A PRR of 2.0 means
+        the event is reported twice as frequently for this drug as the background rate. It is
+        widely used by regulatory authorities (e.g. MHRA, EMA) as a transparent baseline metric.
 
     Parameters:
         container: A DataContainer holding event counts and marginal totals.
@@ -54,28 +55,10 @@ def prr(
 
     log_prr = np.log((d["n11"] / (d["n11"] + d["n10"])) / (d["n01"] / (d["n01"] + d["n00"])))
     var_log_prr = 1 / d["n11"] - 1 / (d["n11"] + d["n10"]) + 1 / d["n01"] - 1 / (d["n01"] + d["n00"])
-    se_log_prr = np.sqrt(np.maximum(var_log_prr, 0.0))
-    pval_uni = 1 - norm.cdf(log_prr, np.log(relative_risk), se_log_prr)
-    pval_uni = np.clip(pval_uni, 0, 1)
 
-    FDR = compute_fdr(pval_uni, d["num_cell"], fdr_threshold)
-
-    z_crit = 1.959963984540054
-    log_LB = log_prr - z_crit * se_log_prr
-    log_UB = log_prr + z_crit * se_log_prr
-
-    log_LB = np.nan_to_num(log_LB, nan=-np.inf, posinf=np.inf, neginf=-np.inf)
-    log_UB = np.nan_to_num(log_UB, nan=np.inf, posinf=np.inf, neginf=-np.inf)
-
-    max_log_val = np.log(np.finfo(np.float64).max)
-    min_log_val = np.log(np.finfo(np.float64).tiny)
-    ci_upper = np.where(log_UB >= max_log_val, np.inf, np.exp(np.minimum(log_UB, max_log_val)))
-    ci_lower = np.where(log_LB <= min_log_val, 0.0, np.exp(np.maximum(log_LB, min_log_val)))
-
-    RankStat = pval_uni if ranking_statistic == "p_value" else log_LB
-
-    num_signals = determine_num_signals(
-        FDR, RankStat, decision_metric, decision_thres, ranking_statistic, d["num_cell"]
+    rank_stat, ci_lower, ci_upper, fdr, num_signals = compute_ratio_inference(
+        log_prr, var_log_prr, relative_risk, d["num_cell"], fdr_threshold,
+        ranking_statistic, decision_metric, decision_thres,
     )
 
     params = build_params("prr", {
@@ -87,8 +70,8 @@ def prr(
     })
 
     return build_freq_result(
-        d["DATA"], d.get("n11_raw", d["n11"]), d["expected"], RankStat,
+        d["DATA"], d.get("n11_raw", d["n11"]), d["expected"], rank_stat,
         np.exp(log_prr), "PRR",
-        d["n1j"], d["ni1"], FDR, ranking_statistic, num_signals, params,
+        d["n1j"], d["ni1"], fdr, ranking_statistic, num_signals, params,
         ci_lower=ci_lower, ci_upper=ci_upper,
     )

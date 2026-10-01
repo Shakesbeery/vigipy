@@ -1,5 +1,6 @@
 from itertools import chain, combinations
 from collections import Counter, defaultdict
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -67,6 +68,13 @@ def compute_contingency(data_frame, product_label, count_label, ae_label, margin
     Returns:
         pd.DataFrame: A contingency table with adverse events as columns and products as rows.
     """
+    if margin_threshold > 1:
+        prod_totals = data_frame.groupby(product_label, observed=True)[count_label].sum()
+        ae_totals = data_frame.groupby(ae_label, observed=True)[count_label].sum()
+        valid_prods = prod_totals[prod_totals >= margin_threshold].index
+        valid_aes = ae_totals[ae_totals >= margin_threshold].index
+        data_frame = data_frame[data_frame[product_label].isin(valid_prods) & data_frame[ae_label].isin(valid_aes)]
+
     # Create a contingency table based on the brands and AEs
     data_cont = pd.pivot_table(
         data_frame,
@@ -256,6 +264,234 @@ def convert_multi_item(df, product_label=None, ae_label="AE", count_label="count
     )
 
 
+def _mine_frequent_combinations(
+    X_single_csr: sp.csr_matrix,
+    single_drugs: list[str],
+    min_co_reports: int,
+    max_order: int,
+    target_set: Optional[set[str]] = None,
+) -> dict[tuple[int, ...], sp.csr_matrix]:
+    """Mine frequent multi-order drug combinations using Apriori downward closure.
+
+    Parameters:
+        X_single_csr: Sparse (reports x drugs) binary indicator matrix.
+        single_drugs: List of drug names corresponding to columns of X_single_csr.
+        min_co_reports: Minimum co-occurrence count required for inclusion.
+        max_order: Maximum combination size to mine (>= 2).
+        target_set: Optional set of drug names. If provided, candidate combinations
+            must include at least one target drug.
+
+    Returns:
+        Dictionary mapping sorted tuple of drug indices to sparse column vector of co-occurrences.
+    """
+    current_level_combos: dict[tuple[int, ...], sp.csr_matrix] = {}
+
+    # Order 2: Pairs via sparse Gram matrix
+    M_co = (X_single_csr.T @ X_single_csr).tocoo()
+    for j, k, count_val in zip(M_co.row, M_co.col, M_co.data):
+        if j < k and count_val >= min_co_reports:
+            d1, d2 = single_drugs[j], single_drugs[k]
+            if target_set is not None and (d1 not in target_set and d2 not in target_set):
+                continue
+            pair_col = X_single_csr[:, j].multiply(X_single_csr[:, k])
+            current_level_combos[(j, k)] = pair_col
+
+    all_combos: dict[tuple[int, ...], sp.csr_matrix] = dict(current_level_combos)
+
+    # Order 3 .. max_order: Downward closure extension
+    for order in range(3, max_order + 1):
+        prev_keys = list(current_level_combos.keys())
+        next_level_combos: dict[tuple[int, ...], sp.csr_matrix] = {}
+        n_prev = len(prev_keys)
+
+        for a in range(n_prev):
+            k1 = prev_keys[a]
+            for b in range(a + 1, n_prev):
+                k2 = prev_keys[b]
+                if k1[:-1] == k2[:-1] and k1[-1] < k2[-1]:
+                    candidate = k1 + (k2[-1],)
+                    cand_col = current_level_combos[k1].multiply(X_single_csr[:, k2[-1]])
+                    cand_count = cand_col.nnz
+                    if cand_count >= min_co_reports:
+                        cand_drugs = [single_drugs[idx] for idx in candidate]
+                        if target_set is not None and not any(d in target_set for d in cand_drugs):
+                            continue
+                        next_level_combos[candidate] = cand_col
+
+        all_combos.update(next_level_combos)
+        current_level_combos = next_level_combos
+        if not current_level_combos:
+            break
+
+    return all_combos
+
+
+def convert_ddi(
+    data: pd.DataFrame,
+    product_label: str = "name",
+    ae_label: str = "AE",
+    report_id_label: str = "report_id",
+    min_co_reports: int = 3,
+    max_order: int = 2,
+    include_singles: bool = True,
+    target_drugs: Optional[Union[list[str], set[str]]] = None,
+    pair_delimiter: str = " + ",
+    sparse: bool = True,
+    covariate_labels: Optional[list[str]] = None,
+) -> DataContainer:
+    """Convert case-level report data into a Drug-Drug Interaction (DDI) DataContainer.
+
+    Clinical Intuition:
+        In post-marketing pharmacovigilance, patients are rarely exposed to just a single
+        medication. Polydrug regimens, polypharmacy in elderly cohorts, and multi-agent
+        chemotherapy commonly induce adverse events that do not occur with single agents.
+
+        While standard `convert_binary` models each drug independently, `convert_ddi`
+        discovers co-prescribed combinations directly from case-level spontaneous reports.
+        Using Apriori downward closure on patient report identifiers, it efficiently extracts
+        frequent drug pairs, triplets, and higher-order combinations without memory explosion.
+
+        The resulting container embeds both individual drug baselines and combinatorial
+        interaction entities into a unified design matrix. This allows either specialized
+        interaction models (e.g., `score_ddi`) or standard disproportionality algorithms
+        (`prr`, `ror`, `gps`, `lasso`) to analyze drug-drug synergy.
+
+    Parameters:
+        data: A DataFrame consisting of report-level product and adverse event occurrences.
+        product_label: Column containing product/drug names. Defaults to "name".
+        ae_label: Column containing adverse event terms. Defaults to "AE".
+        report_id_label: Column containing individual report / patient identifiers. Required
+            to determine true patient-level co-exposure. Defaults to "report_id".
+        min_co_reports: Minimum number of distinct reports where the drug combination must
+            appear together to be included as a candidate interaction entity. Defaults to 3.
+        max_order: Maximum order of interactions to generate (2 for pairs, 3 for triplets, etc.).
+            Defaults to 2.
+        include_singles: Whether to include single-drug main effect features alongside the
+            interaction pairs. True is strongly recommended so models can condition on
+            individual drug baselines. Defaults to True.
+        target_drugs: Optional list or set of drug names to focus screening. If specified,
+            only combinations containing at least one target drug are retained. Defaults to None.
+        pair_delimiter: String delimiter used to join drug names in pairs. Defaults to " + ".
+        sparse: If True, uses memory-efficient scipy.sparse CSR representation. Defaults to True.
+        covariate_labels: Optional list of per-report covariate column names (e.g. ['age', 'sex']).
+
+    Returns:
+        DataContainer: Fully initialized container with product_features, event_outcomes,
+            contingency, data, and pair_mapping.
+    """
+    if max_order < 2:
+        raise ValueError(f"max_order must be >= 2 (got {max_order}).")
+    if report_id_label not in data.columns:
+        raise ValueError(
+            f"report_id_label '{report_id_label}' not found in data columns. "
+            "DDI conversion requires a report identifier to model patient-level co-prescription."
+        )
+    if product_label not in data.columns:
+        raise ValueError(f"product_label '{product_label}' not found in data columns.")
+    if ae_label not in data.columns:
+        raise ValueError(f"ae_label '{ae_label}' not found in data columns.")
+    if covariate_labels is not None and not all(c in data.columns for c in covariate_labels):
+        missing = [c for c in covariate_labels if c not in data.columns]
+        raise ValueError(f"covariate_labels {missing} not found in data columns.")
+
+    keep_cols = [report_id_label, product_label, ae_label]
+    if covariate_labels:
+        keep_cols.extend(covariate_labels)
+    data_clean = _sanitize_data(data, keep_cols).dropna(subset=[report_id_label, product_label, ae_label])
+    data_clean[product_label] = data_clean[product_label].astype(str).str.strip()
+    data_clean[ae_label] = data_clean[ae_label].astype(str).str.strip()
+
+    prod_df = _build_sparse_crosstab(data_clean, report_id_label, product_label)
+    event_df = _build_sparse_crosstab(data_clean, report_id_label, ae_label)
+    common_idx = prod_df.index.intersection(event_df.index)
+    prod_df = prod_df.loc[common_idx]
+    event_df = event_df.loc[common_idx]
+
+    X_single_csr = prod_df.sparse.to_coo().tocsr()
+    single_drugs = list(prod_df.columns)
+    target_set = set(target_drugs) if target_drugs is not None else None
+
+    # Multi-order interaction mining using Apriori downward closure
+    all_combos = _mine_frequent_combinations(
+        X_single_csr, single_drugs, min_co_reports, max_order, target_set
+    )
+
+    if not all_combos:
+        msg = f"No drug combinations met the threshold of min_co_reports={min_co_reports}."
+        if target_drugs:
+            msg += f" (target_drugs={target_drugs})"
+        raise ValueError(msg)
+
+    # Sort combos by order ascending, then frequency descending
+    combo_items = list(all_combos.items())
+    combo_items.sort(key=lambda item: (len(item[0]), -item[1].nnz))
+
+    pair_names = []
+    pair_cols = []
+    pair_mapping: dict[str, tuple[str, ...]] = {}
+
+    for indices, col in combo_items:
+        drug_names = tuple(single_drugs[idx] for idx in indices)
+        name = pair_delimiter.join(drug_names)
+        pair_names.append(name)
+        pair_cols.append(col)
+        pair_mapping[name] = drug_names
+
+    X_pairs_csr = sp.hstack(pair_cols, format="csr")
+
+    if include_singles:
+        X_all_csr = sp.hstack([X_single_csr, X_pairs_csr], format="csr")
+        all_feature_names = single_drugs + pair_names
+    else:
+        X_all_csr = X_pairs_csr
+        all_feature_names = pair_names
+
+    if sparse:
+        full_prod_df = pd.DataFrame.sparse.from_spmatrix(
+            X_all_csr, index=common_idx, columns=all_feature_names
+        ).astype(pd.SparseDtype(float, 0.0))
+        final_event_df = event_df
+    else:
+        full_prod_df = pd.DataFrame(
+            X_all_csr.toarray(), index=common_idx, columns=all_feature_names
+        )
+        final_event_df = pd.DataFrame(
+            event_df.sparse.to_coo().toarray(),
+            index=common_idx,
+            columns=list(event_df.columns),
+        )
+
+    Y_csr = event_df.sparse.to_coo().tocsr()
+    C_mat = (X_all_csr.T @ Y_csr).toarray()
+    contingency_df = pd.DataFrame(
+        C_mat, index=all_feature_names, columns=list(event_df.columns)
+    )
+    r_sums = np.sum(C_mat, axis=1)
+    c_sums = np.sum(C_mat, axis=0)
+    data_df = count(contingency_df, r_sums, c_sums)
+
+    covariates = None
+    covariate_names = None
+    if covariate_labels:
+        covariates, covariate_names = _extract_covariates(
+            data_clean, report_id_label, covariate_labels, common_idx
+        )
+
+    return DataContainer(
+        data=data_df,
+        N=int(np.sum(C_mat)),
+        contingency=contingency_df,
+        product_features=full_prod_df,
+        event_outcomes=final_event_df,
+        type="binary_ddi",
+        covariates=covariates,
+        feature_names=all_feature_names,
+        event_names=list(event_df.columns),
+        covariate_names=covariate_names,
+        pair_mapping=pair_mapping,
+    )
+
+
 def count(data, rows, cols):
     """
     Convert the input contingency table to a flattened table
@@ -300,9 +536,10 @@ def _build_sparse_crosstab(data, index_label, column_label):
     col_cat = pd.Categorical(data[column_label])
     row_codes = idx_cat.codes
     col_codes = col_cat.codes
-    ones = np.ones(len(row_codes), dtype=np.float64)
+    valid_mask = (row_codes >= 0) & (col_codes >= 0)
+    ones = np.ones(valid_mask.sum(), dtype=np.float64)
     csr = sp.coo_matrix(
-        (ones, (row_codes, col_codes)),
+        (ones, (row_codes[valid_mask], col_codes[valid_mask])),
         shape=(len(idx_cat.categories), len(col_cat.categories)),
     ).tocsr()
     # Clip to binary (co-occurrence → 0/1)
@@ -373,23 +610,13 @@ def _extract_covariates(data, report_id_label, covariate_labels, common_idx):
 
 
 def __expand_dataframe(df, count_label, ae_label, product_label):
-    new = defaultdict(list)
-    for row in df.itertuples(index=False):
-        for _ in range(int(getattr(row, count_label))):
-            new[product_label].append(getattr(row, product_label))
-            new[ae_label].append(getattr(row, ae_label))
-            new[count_label].append(1)
-
-    new_data = pd.DataFrame(new)
-    return new_data
+    counts = df[count_label].astype(int)
+    expanded = df.loc[df.index.repeat(counts), [product_label, ae_label]].copy()
+    expanded[count_label] = 1
+    return expanded.reset_index(drop=True)
 
 
 def __transform_dataframe(df, count_label, ae_label):
-    # Create a new dataframe with unique values from 'AE' as columns, and initialize all cells with 0
-    new_df = pd.DataFrame(0, index=range(len(df)), columns=df[ae_label].unique())
-
-    # Iterate through the rows and set the appropriate value from 'count' in the corresponding 'AE' column
-    for i, row in df.iterrows():
-        new_df.at[i, row[ae_label]] = row[count_label]
-
-    return new_df
+    cols = df[ae_label].unique()
+    dummies = pd.get_dummies(df[ae_label], prefix="", prefix_sep="")[cols]
+    return dummies.multiply(df[count_label], axis=0).astype(int)

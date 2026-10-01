@@ -27,8 +27,17 @@ def rfet(
 ) -> AnalysisResult:
     """Calculate the Reporting Fisher's Exact Test (RFET) for pharmacovigilance signal detection.
 
-    Computes exact hypergeometric p-values for 2x2 contingency tables using SciPy's
-    hypergeometric survival function, optionally applying Lancaster's mid-p correction.
+    Clinical Intuition:
+        When cell counts are small (e.g., fewer than 5 reports), large-sample asymptotic
+        approximations (like normal Wald z-scores for PRR and ROR) break down, producing
+        unstable p-values and inflated type I errors.
+
+        The Reporting Fisher's Exact Test (RFET) calculates exact hypergeometric probabilities
+        conditioned on the observed margins, making it the gold standard for rare, small-count
+        adverse drug reactions. When `mid_pval=True`, Lancaster's mid-p correction is applied,
+        which subtracts half the point probability of the observed count to reduce the
+        inherent conservatism of classical Fisher's exact tests while strictly controlling
+        false positive rates.
 
     Parameters:
         container: A DataContainer holding event counts and marginal totals.

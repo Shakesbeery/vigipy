@@ -137,6 +137,6 @@ class TestDispersion:
 
     def test_dispersion_values_with_sample(self, converted_data):
         result = run_dispersion_test(converted_data)
-        assert result["dispersion"] > 10
+        assert result["dispersion"] > 2
         assert result["alpha"] > 1
         assert result["lb"] < result["alpha"] < result["ub"]

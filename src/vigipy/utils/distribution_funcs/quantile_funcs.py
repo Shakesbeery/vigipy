@@ -11,17 +11,21 @@ def quantiles(threshold, Q, a1, b1, a2, b2):
     """
     is_scalar = np.ndim(Q) == 0
     length = 1 if is_scalar else len(Q)
-    m = np.repeat(-100000.0, length)
-    M = np.repeat(100000.0, length)
+    max_mean = np.maximum(1000.0, 10.0 * np.maximum(a1 / np.maximum(b1, 1e-6), a2 / np.maximum(b2, 1e-6)))
+    M = np.asarray(np.broadcast_to(max_mean, length), dtype=np.float64).copy()
+    m = np.zeros(length, dtype=np.float64)
     x = np.repeat(1.0, length)
     cost = f_cost_quantiles(x, threshold, Q, a1, b1, a2, b2)
-    while np.max(np.round(cost * 1e4)) != 0:
+    iteration = 0
+    max_iter = 100
+    while np.max(np.round(cost * 1e4)) != 0 and iteration < max_iter:
         S = np.sign(cost)
         xnew = (1 + S) / 2 * ((x + m) / 2) + (1 - S) / 2 * ((M + x) / 2)
         M = (1 + S) / 2 * x + (1 - S) / 2 * M
         m = (1 + S) / 2 * m + (1 - S) / 2 * x
         x = xnew
         cost = f_cost_quantiles(x, threshold, Q, a1, b1, a2, b2)
+        iteration += 1
     if is_scalar:
         return float(x[0])
     return x

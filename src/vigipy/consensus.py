@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any, Union
 
@@ -11,7 +12,7 @@ import pandas as pd
 
 from .analyze import analyze_all
 from .config import MethodConfig
-from .utils.Container import AnalysisResult, DataContainer
+from .utils.Container import AnalysisResult, DataContainer, _export_tabular_result
 
 
 # Candidate columns for primary disproportionality scores
@@ -25,6 +26,8 @@ _PRIMARY_STAT_CANDIDATES = [
     "log2",
     "aROR",
     "LASSO Coefficient",
+    "SER",
+    "SRR",
     "count/expected",
 ]
 
@@ -266,22 +269,38 @@ class ConsensusResult:
         )
         return ct
 
-    def export(self, filepath: str, index: bool = False) -> None:
+    def export(
+        self,
+        filepath: Union[str, os.PathLike],
+        index: bool = False,
+        which: str = "signals",
+    ) -> None:
         """Export consensus signals, comparison table, and method agreement matrices.
 
         Parameters:
-            filepath: Output filepath. If the path ends with '.csv', signals are exported
-                to CSV format. If '.xlsx', writes a multi-sheet workbook including
+            filepath: Output filepath or PathLike. If '.parquet', exports to Apache Parquet format.
+                If '.csv', exports to CSV. If '.xlsx', writes a multi-sheet workbook including
                 'Consensus Signals', 'Comparison Table', and agreement matrices.
             index: Whether to write row index labels to the output file (for signals/comparison).
                 Agreement matrices are always exported with method names as index labels.
+            which: Which table(s) to export for CSV/Parquet ('signals', 'all', or 'both'). Default 'signals'.
         """
-        if filepath.endswith(".csv"):
-            self.signals.to_csv(filepath, index=index)
+        path_str = os.fspath(filepath)
+
+        if path_str.endswith(".parquet") or path_str.endswith(".pq") or path_str.endswith(".csv"):
+            _export_tabular_result(
+                self.signals,
+                self.comparison_table,
+                filepath,
+                primary_sheet="Consensus Signals",
+                secondary_sheet="Comparison Table",
+                which=which,
+                index=index,
+            )
             return
 
         try:
-            with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
+            with pd.ExcelWriter(path_str, engine="openpyxl") as writer:
                 self.signals.to_excel(
                     writer, sheet_name="Consensus Signals", index=index
                 )
@@ -310,12 +329,42 @@ class ConsensusResult:
                 "Install it with 'pip install openpyxl' or 'pip install vigipy[excel]'."
             ) from exc
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ConsensusResult):
+            return False
+        if self.num_signals != other.num_signals:
+            return False
+        if self.params != other.params:
+            return False
+        try:
+            pd.testing.assert_frame_equal(self.signals, other.signals)
+            pd.testing.assert_frame_equal(self.comparison_table, other.comparison_table)
+            return True
+        except (AssertionError, ValueError):
+            return False
+
     def __repr__(self) -> str:
-        return (
-            f"ConsensusResult(num_signals={self.num_signals}, "
-            f"total_pairs={len(self.comparison_table)}, "
-            f"methods={self.methods})"
-        )
+        methods_str = ", ".join(self.methods)
+        total = len(self.comparison_table) if self.comparison_table is not None else 0
+        header = f"<ConsensusResult: {self.num_signals} consensus signal(s) from {len(self.methods)} methods [{methods_str}] (total pairs: {total})>"
+        if self.num_signals == 0 or self.signals is None or len(self.signals) == 0:
+            return header
+
+        top_n = min(3, len(self.signals))
+        lines = [header, "  Top Consensus Alerts:"]
+        for idx in range(top_n):
+            row = self.signals.iloc[idx]
+            prod = row.get("Product", "?")
+            ae = row.get("Adverse Event", "?")
+            votes = row.get("votes", "?")
+            score = row.get("consensus_score", None)
+            tier = row.get("agreement_tier", "")
+            score_str = f", score: {score:.2f}" if isinstance(score, (int, float, np.floating)) else ""
+            lines.append(f"    - {prod} | {ae} ({votes}/{len(self.methods)} votes{score_str}, tier: {tier})")
+
+        if self.num_signals > top_n:
+            lines.append(f"    ... and {self.num_signals - top_n} more consensus alert(s)")
+        return "\n".join(lines)
 
 
 def consensus_analysis(
@@ -326,6 +375,20 @@ def consensus_analysis(
     **shared_overrides: Any,
 ) -> ConsensusResult:
     """Compare and synthesize results across multiple disproportionality analysis (DA) methods.
+
+    Clinical Intuition:
+        No single disproportionality algorithm is universally superior across all pharmacovigilance
+        scenarios. Frequentist methods (PRR, ROR) provide raw, un-shrunk risk ratios favored by
+        some health authorities but are susceptible to high false-positive rates on rare events.
+        Empirical Bayes methods (GPS, BCPNN) shrink small-sample estimates toward the background
+        null, preventing false alarms but potentially delaying early detection of emerging risks.
+        Penalized regression (LASSO) controls for multi-drug co-prescription confounding, and
+        syndromic models (SCORE-DA) account for underlying indication bias and symptom clustering.
+
+        `consensus_analysis` operationalizes multi-method triage: drug-event pairs that trigger
+        alerts across multiple independent statistical paradigms represent high-confidence,
+        robust signals that warrant prioritized clinical review, whereas single-method outliers
+        can be flagged as sensitive or method-specific artifacts.
 
     Parameters:
         data: A DataContainer instance or a dictionary of pre-computed {method_name: AnalysisResult}.

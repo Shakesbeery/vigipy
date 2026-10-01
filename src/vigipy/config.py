@@ -41,7 +41,7 @@ class PRRConfig:
         continuity_correction: Apply Haldane-Anscombe correction (+0.5) to contingency tables with zero cells.
     """
 
-    method: str = field(default="prr", init=False)
+    method: str = "prr"
     relative_risk: float = 1
     min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
@@ -69,7 +69,7 @@ class RORConfig:
         continuity_correction: Apply Haldane-Anscombe correction (+0.5) to contingency tables with zero cells.
     """
 
-    method: str = field(default="ror", init=False)
+    method: str = "ror"
     relative_risk: float = 1
     min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
@@ -97,7 +97,7 @@ class RFETConfig:
         fdr_threshold: Target FDR level for local Bayes estimation.
     """
 
-    method: str = field(default="rfet", init=False)
+    method: str = "rfet"
     min_events: int = 3
     decision_metric: DecisionMetric = "fdr"
     decision_thres: float = 0.05
@@ -123,7 +123,7 @@ class BCPNNConfig:
         method_alpha: Dispersion parameter for negative binomial expected count model.
     """
 
-    method: str = field(default="bcpnn", init=False)
+    method: str = "bcpnn"
     relative_risk: float = 1
     min_events: int = 3
     decision_metric: DecisionMetric = "rank"
@@ -156,7 +156,7 @@ class GPSConfig:
         minimization_options: Solver-specific options dictionary passed to scipy.optimize.minimize.
     """
 
-    method: str = field(default="gps", init=False)
+    method: str = "gps"
     relative_risk: float = 1
     min_events: int = 3
     decision_metric: DecisionMetric = "rank"
@@ -197,7 +197,7 @@ class LASSOConfig:
             1 for sequential (default). Only used when family='logistic'.
     """
 
-    method: str = field(default="lasso", init=False)
+    method: str = "lasso"
     lasso_thresh: float = 0
     alpha: float = 0.5
     min_events: int = 3
@@ -220,5 +220,73 @@ class LASSOConfig:
     n_jobs: int = 1
 
 
-MethodConfig = Union[PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, LASSOConfig]
+@dataclass(frozen=True)
+class SCOREConfig:
+    """Configuration for SCORE-DA (Syndromic Cellwise Outlier & Residual Estimation).
+
+    Parameters:
+        latent_rank: Number of latent factors for background indication & drug class absorption.
+        syndromic_weight: Graph Laplacian coupling penalty (lambda_2 >= 0).
+        sparsity_param: L1 sparsity penalty (lambda_1 >= 0) on the excess signal rate.
+        fdr_threshold: Target False Discovery Rate (q-value) cutoff for signal detection.
+        deflate_iterations: Number of iterative deflation passes to remove masking/blockbuster bias.
+        min_events: Minimum observed event count required to qualify as a signal.
+        max_iter: Maximum number of FISTA iterations per drug.
+        tol: Convergence tolerance for FISTA.
+        n_jobs: Number of CPU worker processes.
+        seed: Random seed for reproducibility.
+    """
+
+    method: str = "score"
+    latent_rank: int = 5
+    syndromic_weight: float = 0.5
+    sparsity_param: float = 1.0
+    fdr_threshold: float = 0.05
+    deflate_iterations: int = 2
+    min_events: int = 1
+    max_iter: int = 50
+    tol: float = 1e-4
+    n_jobs: int = 1
+    seed: int = 42
+
+
+@dataclass(frozen=True)
+class SCOREDDIConfig:
+    """Configuration for SCORE-DDI (Drug-Drug & Multi-Drug Interaction Discovery).
+
+    Parameters:
+        interaction_model: Null model for expected count under no interaction ('multiplicative' or 'additive').
+        syndromic_weight: Graph Laplacian coupling penalty (lambda_2 >= 0) across adverse events.
+        sparsity_param: L1 sparsity penalty (lambda_1 >= 0) on the synergistic excess rate.
+        fdr_threshold: Target False Discovery Rate (q-value) cutoff for interaction signal detection.
+        min_events: Minimum observed co-occurrence count required to qualify as an interaction signal.
+        max_iter: Maximum number of FISTA iterations per drug pair.
+        tol: Convergence tolerance for FISTA.
+        n_jobs: Number of CPU worker processes (-1 for all available cores).
+        seed: Random seed for reproducibility.
+    """
+
+    method: str = "score_ddi"
+    interaction_model: str = "multiplicative"
+    syndromic_weight: float = 0.5
+    sparsity_param: float = 1.0
+    fdr_threshold: float = 0.05
+    min_events: int = 1
+    max_iter: int = 50
+    tol: float = 1e-4
+    n_jobs: int = 1
+    seed: int = 42
+
+
+MethodConfig = Union[
+    PRRConfig,
+    RORConfig,
+    RFETConfig,
+    BCPNNConfig,
+    GPSConfig,
+    LASSOConfig,
+    SCOREConfig,
+    SCOREDDIConfig,
+]
+
 

@@ -1,436 +1,394 @@
-# vigipy
+# vigipy: Pharmacovigilance & Disproportionality Analysis in Python
+
+[![PyPI version](https://img.shields.io/pypi/v/vigipy.svg)](https://pypi.org/project/vigipy/)
+[![Python versions](https://img.shields.io/pypi/pyversions/vigipy.svg)](https://pypi.org/project/vigipy/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > [!IMPORTANT]
-> **Release — `vigipy` v3.3.1 is live!**
-> Cross-method consensus signal detection engine (`consensus_analysis`) and concordance analytics:
-> - **Cross-Method Consensus Engine**: Synthesize findings across PRR, ROR, RFET, BCPNN, GPS, and LASSO in a single unified call with per-signal alert vote tallying, normalized consensus scoring, and categorical agreement tiers (`Unanimous`, `Strong`, `Moderate`, `Weak`, `Isolated`).
-> - **Method Concordance Analytics**: Inter-method agreement matrices (pairwise Jaccard similarity, Cohen's Kappa concordance, Spearman rank correlation, and alert overlap) and $2 \times 2$ alert contingency matrices.
-> - **Signal Drill-Down & Reporting**: Deep inspection tool (`inspect_signal()`) across all methods and multi-sheet Excel (`.xlsx`) / CSV export.
-> - **Longitudinal & Pipeline Performance**: Multi-core slice parallelism, $O(\log N)$ binary search slicing, hyperprior warm-starting, and closed-form analytical GPS likelihoods from v3.3.
-> 
-> *See the updated API documentation and examples below.*
-
-`vigipy` is a Python library bringing modern disproportionality analyses and pharmacovigilance techniques into the Python ecosystem with a clean, intuitive, and type-safe interface. Core disproportionality methods are adapted and extended from Ismail Ahmed and Antoine Poncet's [PhViD](https://cran.r-project.org/web/packages/PhViD/index.html) package, fully vectorized with native NumPy and SciPy routines.
-
-### Top-level Functions & Classes:
-
-* **Unified Interface**:
-  * `analyze()` - Execute any disproportionality analysis via typed configuration dataclasses
-  * `analyze_all()` - Run multiple analysis methods in a single call with shared or distinct parameters
-  * `consensus_analysis()` - Synthesize and compare findings across multiple DA methods with agreement scoring, concordance analytics, signal inspection, and multi-sheet reporting
-  * `PRRConfig`, `RORConfig`, `RFETConfig`, `BCPNNConfig`, `GPSConfig`, `LASSOConfig` - Type-safe configuration dataclasses
-* **Disproportionality Methods**:
-  * `prr()` - Proportional Reporting Ratio (frequentist log-normal approximation)
-  * `ror()` - Reporting Odds Ratio (Woolf log-odds approximation)
-  * `rfet()` - Reporting Fisher's Exact Test (exact hypergeometric p-values with optional mid-p correction)
-  * `bcpnn()` - Bayesian Confidence Propagation Neural Network (analytical or Dirichlet Monte Carlo Information Component)
-  * `gps()` - Multi-item Gamma Poisson Shrinker (Empirical Bayes bivariate mixture model)
-  * `lasso()` - LASSO regression for multivariate signal detection and confounding adjustment
-* **Longitudinal Modeling**:
-  * `LongitudinalModel()` - Apply any analysis method over time to evaluate cumulative or disjoint signal evolution
-* **Data Preparation**:
-  * `convert()` - Convert adverse event and product count tables into a structured `DataContainer`
-  * `convert_binary()` - Generate binary product feature matrices, event outcomes, and optional covariates for LASSO (supports sparse CSR storage)
-  * `convert_multi_item()` - Aggregate co-occurring product columns into multi-item interaction tables
-* **Result & Data Containers**:
-  * `AnalysisResult` - Structured container for `signals`, `all_signals`, `num_signals`, and model `params`, with `.export()` to Excel or CSV
-  * `ConsensusResult` - Cross-method consensus container with merged comparison table, agreement metrics (Jaccard, Cohen's Kappa, Spearman, Overlap), `inspect_signal()`, and multi-tab `.export()`
-  * `DataContainer` - Typed container holding contingency, event, product, and optional covariate matrices
+> **What's New in `vigipy`**
+> - **SCORE-DA & SCORE-DDI**: A novel syndromic outlier estimation framework combining low-rank indication absorption, patient-level Graph Laplacian regularization, non-negative FISTA optimization, and higher-order multi-drug interaction discovery (`max_order=2, 3, ...`).
+> - **Cross-Method Consensus Engine (`consensus_analysis`)**: Triangulate alerts across frequentist, Bayesian, regression, and syndromic methods with agreement tiers, vote tallying, and concordance analytics (Jaccard, Cohen's Kappa, Spearman).
+> - **Two-Stage Relaxed LASSO**: Unbiased adjusted reporting odds ratios ($\text{aROR}$) with sparse memory scaling and clinical confounder adjustment (e.g. Age, Sex).
+> - **Production-Grade Longitudinal Pipeline**: Multi-core time-slice parallelism, closed-form analytical GPS likelihoods, and hyperprior warm-starting.
 
 ---
 
-## Getting Started
+## The Disproportionality Analysis (DA) Lifecycle
 
-### Dependencies
+Safety surveillance in spontaneous reporting databases (e.g., FDA FAERS, WHO VigiBase, MAUDE) follows a 4-stage lifecycle. `vigipy` provides modular, principled tools for each step:
 
-`vigipy` requires Python 3.9+ and modern scientific computing libraries:
-
-* `pandas>=2.0`
-* `numpy>=1.24,<3`
-* `scipy>=1.10`
-* `scikit-learn>=1.3`
-* `statsmodels>=0.14`
-
-Optional dependencies:
-* `openpyxl>=3.0.0` (required for exporting results directly to Excel `.xlsx` spreadsheets)
-
-### Installation
-
-Install `vigipy` from source or local checkout:
-
-```bash
-pip install .
 ```
-
-To include Excel export capabilities:
-
-```bash
-pip install ".[excel]"
-```
-
-For development (includes test and lint tools):
-
-```bash
-pip install -e ".[dev]"
-```
-
-### Running Tests
-
-Run the full test suite using `pytest`:
-
-```bash
-pytest test/ -v
+┌────────────────────────────────────────────────────────────────────────┐
+│  STAGE 1: DATA INGESTION & PREPARATION                                 │
+│  Convert raw tables into typed DataContainers (Sparse, Binary, DDI)    │
+│  [ convert()  │  convert_binary()  │  convert_ddi() ]                  │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  STAGE 2: STATISTICAL MODELING & SIGNAL DETECTION                      │
+│  Screen for disproportionate drug-event associations via analyze()     │
+│  • Frequentist:      PRR, ROR, RFET                                    │
+│  • Bayesian:         GPS (Gamma Poisson), BCPNN (Information Component)│
+│  • Multivariable:    Relaxed Logistic LASSO (Confounder Adjustment)    │
+│  • Syndromic:        SCORE-DA (Indication SVD + Graph Regularization)  │
+│  • Multi-Drug/DDI:   SCORE-DDI (Higher-Order Regimen Synergy)          │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                  ┌─────────────────┴─────────────────┐
+                  ▼                                   ▼
+┌───────────────────────────────────┐   ┌────────────────────────────────┐
+│  STAGE 3: MULTI-METHOD CONSENSUS  │   │  STAGE 4: TEMPORAL MONITORING  │
+│  Triangulate alerts across models │   │  Track signal emergence over   │
+│  • Vote tallying & Consensus score│   │  time across quarterly/annual  │
+│  • Agreement tiers & Kappa stats  │   │  reporting periods             │
+│  • Signal inspection & drill-down │   │  • Cumulative vs. Disjoint     │
+│  [ consensus_analysis() ]         │   │  [ LongitudinalModel ]         │
+└───────────────────────────────────┘   └────────────────────────────────┘
 ```
 
 ---
 
-## Usage
+## Installation & Setup
 
-### Unified API (Recommended)
+### Requirements
+* Python 3.9+
+* `numpy>=1.24`, `scipy>=1.10`, `pandas>=2.0`, `scikit-learn>=1.3`, `statsmodels>=0.14`
+* Optional: `openpyxl>=3.0` (for Excel `.xlsx` multi-sheet reports)
 
-The unified interface provides type safety, autocompletion, and consistent result structures across all methods:
+```bash
+# Standard installation
+pip install vigipy
+
+# Install with Excel export support
+pip install "vigipy[excel]"
+```
+
+Run tests to verify installation:
+```bash
+pytest
+```
+
+---
+
+## Stage 1: Data Preparation & Ingestion
+
+Pharmacovigilance datasets come in different formats: pre-aggregated frequency counts, case-level binary reports, or multi-drug polypharmacy regimens. Choosing the right preprocessor ensures optimal statistical power and memory efficiency.
+
+### 1. `convert()`: For Summary Contingency Tables
+* **When to use**: Your data is already aggregated into counts of `(Product, Adverse Event, Count)`.
+* **Compatible methods**: PRR, ROR, RFET, GPS, BCPNN, SCORE-DA.
 
 ```python
 import pandas as pd
-from vigipy import convert, convert_binary, analyze, analyze_all, PRRConfig, BCPNNConfig, GPSConfig, LASSOConfig
+import vigipy as vg
 
-# 1. Load data and convert to a DataContainer
-df = pd.read_csv("AE_count_data.csv")
-data = convert(df, product_label="name", ae_label="AE", count_label="count")
+df = pd.read_csv("contingency_counts.csv")
+# Columns: 'product_name', 'adverse_event', 'count'
 
-# 2. Run a single method with typed configuration
-result = analyze(data, PRRConfig(min_events=3, decision_metric="fdr", fdr_threshold=0.05))
-
-print(f"Detected {result.num_signals} signals")
-print(result.signals.head())
-
-# Export both significant signals and full dataset to Excel or CSV
-result.export("prr_signals.xlsx")   # Creates 'Signals' and 'all_data' sheets
-result.export("prr_signals.csv")    # Exports detected signals to CSV
-
-# 3. Batch comparison across all methods in one call
-batch_results = analyze_all(data, min_events=3, decision_metric="rank")
-for method_name, res in batch_results.items():
-    print(f"{method_name.upper()}: {res.num_signals} signals detected")
-
-# 4. Iterate over custom configurations
-configs = [
-    PRRConfig(min_events=5, ranking_statistic="CI"),
-    BCPNNConfig(min_events=5, ranking_statistic="quantile"),
-    GPSConfig(min_events=5, ranking_statistic="log2"),
-]
-for cfg in configs:
-    res = analyze(data, cfg)
-    print(f"{cfg.method}: {res.num_signals} signals")
-
-# 5. Multivariable Relaxed LASSO with typed configuration
-bin_data = convert_binary(df, report_id_label="report_id", sparse=True)
-lasso_res = analyze(bin_data, LASSOConfig(min_events=3, relaxed=True, n_jobs=-1))
-print(f"LASSO: {lasso_res.num_signals} signals detected")
+data = vg.convert(
+    df,
+    product_label="product_name",
+    ae_label="adverse_event",
+    count_label="count",
+    margin_threshold=3,  # Filter out rare events with total counts < 3
+)
 ```
 
-### Cross-Method Consensus Analysis (`consensus_analysis`)
-
-Synthesize and compare findings across multiple disproportionality analysis methods in a single call. `consensus_analysis` automatically aligns candidate pairs, tabulates alert votes and normalized consensus scores, assigns agreement tiers (`Unanimous`, `Strong`, `Moderate`, `Weak`, `Isolated`), evaluates method concordance matrices (Jaccard, Cohen's Kappa, Spearman rank correlation, Overlap), and provides signal drill-down inspection and multi-sheet Excel export:
+### 2. `convert_binary()`: For Case-Level Reports & Confounder Adjustment
+* **When to use**: You have individual patient report IDs (`report_id`). Multiple medications and symptoms can appear on the same report.
+* **Why it matters**: 
+  - Required for **LASSO** (evaluates all concurrent medications simultaneously).
+  - Unlocks **SCORE-DA's syndromic graph**, ensuring symptom co-occurrence reflects true patient-level clinical syndromes rather than aggregate product correlation.
+  - Supports **confounder adjustment** (e.g. Age, Sex).
+  - Uses `sparse=True` (CSR matrix storage) to handle millions of reports with low memory usage.
 
 ```python
-from vigipy import convert, consensus_analysis, PRRConfig, BCPNNConfig, GPSConfig
+df_reports = pd.read_csv("faers_case_reports.csv")
+# Columns: 'report_id', 'drug_name', 'reaction', 'age', 'sex'
 
-df = pd.read_csv("AE_count_data.csv")
-data = convert(df)
+binary_data = vg.convert_binary(
+    df_reports,
+    product_label="drug_name",
+    ae_label="reaction",
+    report_id_label="report_id",
+    covariate_labels=["age", "sex"],  # Standardized continuous, dummy-encoded categorical
+    sparse=True,                      # Memory-efficient sparse CSR matrices
+)
+```
 
-# 1. Run all default regulatory methods (PRR, ROR, RFET, BCPNN, GPS)
-# Filter consensus signals requiring agreement from at least 3 methods:
-consensus = consensus_analysis(data, min_events=3, min_consensus=3)
+### 3. `convert_ddi()`: For Drug-Drug & Multi-Drug Interactions
+* **When to use**: You want to screen for pairwise drug-drug interactions ($k=2$) or higher-order multi-drug regimens ($k=3, \dots$).
+* **How it works**: Uses sparse matrix intersection ($\mathbf{X}^\top \mathbf{X}$) to automatically find drug combinations meeting `min_co_reports`, avoiding combinatorial blowup.
+* **Universal compatibility**: Produces a standard `DataContainer` containing both individual drug baselines and combination entities, allowing **any method in `vigipy`** to evaluate combinations.
 
-print(f"Total evaluated pairs: {len(consensus.comparison_table)}")
-print(f"Consensus signals (>= 3 methods): {consensus.num_signals}")
-print(consensus.signals[["Product", "Adverse Event", "Count", "votes", "consensus_score", "agreement_tier"]].head())
+```python
+ddi_container = vg.convert_ddi(
+    df_reports,
+    product_label="drug_name",
+    ae_label="reaction",
+    report_id_label="report_id",
+    min_co_reports=5,     # Drug combo must appear together on >= 5 reports
+    max_order=3,          # Screen pairs (k=2) AND triplets (k=3)
+    include_singles=True, # Retain single drugs as reference baselines
+    sparse=True,
+)
+```
 
-# 2. Inspect a specific signal across all methods
-detail = consensus.inspect_signal("DRUG_A", "CARDIAC_ARREST")
-print(detail)
-# Displays Method, Alert, Metric, Score, CI Lower, CI Upper, p-value, FDR, Count, Expected Count
+---
 
-# 3. Inter-method agreement analytics
-print("Pairwise Jaccard Similarity:")
-print(consensus.method_agreement["jaccard"].round(3))
+## Stage 2: Signal Detection Modeling
 
-print("Cohen's Kappa Inter-Rater Concordance:")
-print(consensus.method_agreement["kappa"].round(3))
+`vigipy` provides a unified interface (`analyze()`) across all modeling paradigms. Each paradigm addresses specific clinical and statistical questions.
 
-print("Spearman Rank Correlation of Primary Statistics:")
-print(consensus.method_agreement["correlation"].round(3))
+### Summary of Signal Detection Methods
 
-# 4. Generate a 2x2 alert contingency matrix between two methods
-print(consensus.contingency_table("prr", "gps"))
+| Method | Paradigm | Primary Statistic | Best Used For |
+| :--- | :--- | :--- | :--- |
+| **PRR** | Frequentist | Proportional Reporting Ratio | Regulatory baseline, transparent proportional ratios |
+| **ROR** | Frequentist | Reporting Odds Ratio | Regulatory compliance (Woolf log-odds CI), matching case-control logic |
+| **RFET** | Frequentist | Mid-p Fisher's Exact Test | Ultra-sparse cells ($n \le 3$), eliminating normal approximation error |
+| **GPS** | Empirical Bayes | EBGM ($EB_{05}$ quantile) | Large database screening; stabilizes small-count variance |
+| **BCPNN** | Empirical Bayes | Information Component ($IC_{025}$) | Early warning surveillance; neural/Dirichlet credibility intervals |
+| **LASSO** | Regularized GLM | Adjusted Odds Ratio ($\text{aROR}$) | Confounder adjustment; removing polypharmacy attribution noise |
+| **SCORE-DA** | Syndromic / Matrix | Syndromic Excess Rate ($\text{SER}$) | Eliminating indication confounding & masking; syndromic borrowing |
+| **SCORE-DDI** | Factorial / Graph | Synergy Excess Rate ($\text{SER}_{\text{int}}$) | True synergy beyond single-drug solo risks; multi-drug regimens |
 
-# 5. Weighted consensus & custom method configurations
-# Weight Bayesian shrinkage higher than frequentist ratios:
-weighted_res = consensus_analysis(
-    data,
-    configs=[PRRConfig(), BCPNNConfig(), GPSConfig()],
-    weights={"gps": 2.0, "bcpnn": 2.0, "prr": 1.0},
-    min_consensus=0.6,   # Require normalized consensus score >= 60%
+---
+
+### The Unified API (`analyze`)
+
+Configure methods with type-safe dataclasses:
+
+```python
+from vigipy import (
+    analyze,
+    PRRConfig,
+    RORConfig,
+    GPSConfig,
+    LASSOConfig,
+    SCOREConfig,
+    SCOREDDIConfig,
 )
 
-# 6. Multi-tab Excel export
-# Writes 'Consensus Signals', 'Comparison Table', 'Jaccard Similarity',
-# 'Cohens Kappa', 'Spearman Correlation', and 'Alert Overlap' sheets:
+# 1. Classical Frequentist (PRR with False Discovery Rate control)
+prr_res = analyze(data, PRRConfig(min_events=3, decision_metric="fdr", fdr_threshold=0.05))
+
+# 2. Empirical Bayes Shrinkage (GPS ranked by EB05)
+gps_res = analyze(data, GPSConfig(min_events=5, ranking_statistic="quantile"))
+
+# 3. Multivariable Confounder-Adjusted LASSO
+lasso_res = analyze(binary_data, LASSOConfig(min_events=3, relaxed=True, n_jobs=-1))
+
+# 4. Syndromic Low-Rank Discovery (SCORE-DA)
+score_res = analyze(data, SCOREConfig(latent_rank=5, syndromic_weight=0.5, fdr_threshold=0.05))
+
+# 5. Multi-Drug Interaction Discovery (SCORE-DDI)
+ddi_res = analyze(ddi_container, SCOREDDIConfig(interaction_model="multiplicative", min_events=3))
+```
+
+---
+
+### Method Deep-Dives
+
+#### Multivariable Relaxed LASSO
+When patients take multiple drugs, single-drug methods suffer from **confounding by co-prescription** (e.g., antiemetics falsely flagged for chemotherapy toxicities).
+* `vigipy.lasso()` fits a high-dimensional regularized logistic regression across all drugs and covariates simultaneously.
+* By default (`relaxed=True`), it runs a **two-stage Relaxed LASSO**: Stage 1 screens active features; Stage 2 refits an unpenalized model on active features using SVD pseudo-inverse Wald standard errors to return **debiased adjusted Reporting Odds Ratios ($\text{aROR}$)**.
+
+```python
+result = vg.lasso(
+    binary_data,
+    min_events=3,
+    relaxed=True,                   # Debiased relaxed refit
+    decision_metric="lower_bound",  # Signal if 95% CI lower bound > 1.0
+    n_jobs=-1,                      # Parallel across adverse events
+)
+print(result.signals[["Product", "Adverse Event", "Count", "aROR", "CI Lower", "CI Upper", "p_value"]])
+```
+
+#### SCORE-DA: Syndromic Cellwise Outlier & Residual Estimation
+Traditional disproportionality methods assume independence across symptom columns and suffer from **blockbuster masking** and **indication confounding**.
+* **Indication Absorption**: Uses Truncated SVD on standardized Pearson residuals to absorb shared drug-class and indication baselines.
+* **Syndromic Borrowing**: Builds a patient-level Graph Laplacian ($\mathbf{L}_{\text{AE}}$) from co-occurring symptoms, allowing related events in a syndrome (e.g. *Urticaria + Angioedema + Hypotension*) to borrow strength without relying on external ontologies.
+* **Masking Deflation**: Iteratively deflates detected signals to unmask hidden safety signals suppressed by blockbuster drugs.
+
+```python
+score_res = vg.score_da(
+    data,
+    latent_rank=5,           # Number of latent indication/class factors to absorb
+    syndromic_weight=0.5,    # Graph Laplacian smoothness coupling
+    deflate_iterations=2,    # Iterative deflation passes to eliminate masking
+    fdr_threshold=0.05,      # Benjamini-Hochberg FDR cutoff
+)
+print(score_res.signals[["Product", "Adverse Event", "Count", "SER", "SRR", "fdr", "Syndrome_Cluster"]])
+```
+
+#### SCORE-DDI: Drug-Drug & Multi-Drug Interaction Discovery
+* **Unbiased Solo Baselines**: When evaluating combinations, `score_ddi` subtracts co-prescription counts ($C_1 - C_{\text{combo}}$) so the combination's toxicity cannot artificially inflate the single-drug baseline.
+* **Higher-Order Regimens**: Evaluates pairs ($k=2$), triplets ($k=3$), and custom regimens.
+* **Epidemiological Archetype Classification**:
+  - `EMERGENT`: Toxicity appears exclusively upon combination (neither drug active alone).
+  - `POTENTIATED`: One drug has baseline activity; adding the second drug significantly magnifies risk.
+  - `TWO_HIT` / `MULTI_HIT`: Multiple constituent drugs elevate risk individually; combination triggers compound injury.
+
+```python
+ddi_res = vg.score_ddi(
+    ddi_container,
+    interaction_model="multiplicative",  # or "additive"
+    syndromic_weight=0.5,
+    min_events=3,
+    fdr_threshold=0.05,
+)
+print(ddi_res.signals[[
+    "Components", "Order", "Product", "Adverse Event", "Count",
+    "Expected_Null", "SER_Interaction", "DDI_Ratio", "Interaction_Archetype"
+]])
+```
+
+---
+
+## Stage 3: Triangulation & Cross-Method Consensus
+
+Different models possess distinct biases: frequentist ratios are noisy on small counts; Bayesian shrinkage can be conservative on rare catastrophic reactions; regression models can be sensitive to collinearity.
+
+`consensus_analysis()` synthesizes findings across multiple methods in a single unified call:
+* **Vote Tallying & Consensus Scoring**: Normalizes alert votes across methods into composite scores and categorizes signals into agreement tiers (`Unanimous`, `Strong`, `Moderate`, `Weak`, `Isolated`).
+* **Inter-Method Concordance Analytics**: Computes pairwise Jaccard similarity, Cohen's Kappa concordance, Spearman rank correlation, and $2 \times 2$ alert overlap matrices.
+* **Signal Drill-Down**: `inspect_signal()` provides an immediate side-by-side comparison of every method's score, interval, and alert status for any candidate pair.
+
+```python
+# Run consensus across default regulatory methods (or pass custom configs)
+configs = [
+    vg.PRRConfig(min_events=3),
+    vg.GPSConfig(min_events=3),
+    vg.LASSOConfig(min_events=3),
+    vg.SCOREConfig(min_events=3),
+]
+
+consensus = vg.consensus_analysis(
+    binary_data,
+    configs=configs,
+    min_consensus=3,  # Retain signals alerted by >= 3 methods
+)
+
+# View top consensus signals
+print(consensus.signals[[
+    "Product", "Adverse Event", "Count", "votes", "consensus_score", "agreement_tier"
+]].head())
+
+# Inspect a specific signal across all methods
+detail = consensus.inspect_signal("DRUG_A", "ACUTE_KIDNEY_INJURY")
+print(detail)
+# Displays Method, Alert, Metric, Score, CI Lower, CI Upper, p-value, FDR, Count
+
+# Inter-method agreement metrics
+print("Cohen's Kappa Concordance Matrix:")
+print(consensus.method_agreement["kappa"].round(3))
+
+# Export multi-sheet consensus report to Excel
 consensus.export("consensus_report.xlsx")
 ```
 
-### Classic Function API
-
-Direct function calls are fully supported with identical return structures:
-
-```python
-import pandas as pd
-from vigipy import convert, prr, ror, rfet, bcpnn, gps
-
-df = pd.read_csv("AE_count_data.csv")
-data = convert(df)
-
-# Frequentist: Reporting Odds Ratio with Haldane-Anscombe continuity correction
-ror_res = ror(data, min_events=3, decision_metric="fdr", fdr_threshold=0.05)
-
-# Fisher's Exact Test with Lancaster mid-p adjustment
-rfet_res = rfet(data, min_events=3, mid_pval=True)
-
-# Bayesian Confidence Propagation Neural Network
-bcpnn_res = bcpnn(data, min_events=3, ranking_statistic="quantile")
-
-# Empirical Bayes: Gamma Poisson Shrinker
-gps_res = gps(data, min_events=5, decision_metric="rank", ranking_statistic="log2")
-
-# Multivariable Regularized Regression (LASSO) with Adjusted Odds Ratios
-from vigipy import convert_binary, lasso
-
-# Convert data with sparse representation and optional covariate adjustment
-bin_data = convert_binary(
-    df,
-    product_label="name",
-    ae_label="AE",
-    report_id_label="report_id",
-    sparse=True,                        # Memory-efficient sparse CSR matrix
-    covariate_labels=["age", "sex"],    # Confounder adjustment (e.g. age, sex)
-)
-lasso_res = lasso(
-    bin_data,
-    min_events=3,
-    C=1.0,
-    relaxed=True,                       # Two-stage relaxed refit for debiased aRORs (default)
-    n_jobs=-1,                          # Parallel execution across AE columns (-1 for all CPUs)
-    decision_metric="lower_bound",
-)
-
-# Access results
-print(gps_res.signals[["Product", "Adverse Event", "Count", "quantile", "fdr"]].head())
-print(lasso_res.signals[["Product", "Adverse Event", "Count", "L1 Coefficient", "LASSO Coefficient", "aROR", "CI Lower", "CI Upper", "p_value"]].head())
-gps_res.export("gps_signals.xlsx")
-```
-
 ---
 
-## Decision Rules & Ranking Statistics
+## Stage 4: Temporal & Longitudinal Surveillance
 
-`vigipy` standardizes signal identification across frequentist and Bayesian methods:
+Post-market safety surveillance requires monitoring how disproportionality metrics evolve over time. The `LongitudinalModel` applies any signal detection algorithm across resampled time slices.
 
-### Decision Metrics (`decision_metric`)
-* `"fdr"` - Controls the False Discovery Rate at `decision_thres` (default: `0.05`) using Local Bayes Estimation (LBE) or cumulative posterior null probabilities.
-* `"rank"` - Retains signals where the ranking statistic meets `decision_thres`. For p-values, selects values $\le \text{threshold}$; for confidence/credible bounds, selects values $\ge \text{threshold}$.
-* `"signals"` - Selects the top $N$ ranked candidates up to `decision_thres`.
-* For **LASSO**: `"lower_bound"` (selects signals where CI Lower > threshold, requiring $\text{aROR}_{\text{lower}} > 1.0$) and `"coefficient"` (selects signals where $\beta > \text{threshold}$).
-
-### Ranking Statistics (`ranking_statistic`)
-| Method | Supported Statistics | Notes |
-| :--- | :--- | :--- |
-| **PRR / ROR** | `"p_value"`, `"CI"` | `"CI"` ranks by the lower bound of the 95% confidence interval. |
-| **RFET** | `"p_value"` | Exact hypergeometric p-value (supports `mid_pval=True`). |
-| **BCPNN** | `"quantile"`, `"p_value"` | `"quantile"` ranks by $IC_{025}$ (lower 95% credible bound). |
-| **GPS** | `"log2"`, `"quantile"`, `"p_value"` | `"log2"` ranks by $EB_{05}$ of $\log_2(\lambda)$, shrinked towards expected counts. |
-| **LASSO** | `"aROR"`, `"LASSO Coefficient"` | Two-stage Relaxed LASSO by default (`relaxed=True`: L1 screening + unpenalized refit). Returns debiased adjusted Odds Ratios ($\text{aROR} = \exp(\beta)$), L1 screening coefficients, relaxed coefficients, SVD pseudo-inverse Wald 95% CIs, SE, and Wald p-values. |
-
----
-
-## Expected Count Calculations & Dispersion Testing
-
-Expected counts ($E$) model the baseline event frequency under the null hypothesis of no association. `vigipy` supports three expectation models:
-
-1. `"mantel-haentzel"` (default): Standard independence assumption, $E_{ij} = \frac{n_{i\cdot} n_{\cdot j}}{N}$.
-2. `"poisson"`: Generalized Linear Model using Poisson log-linear regression.
-3. `"negative-binomial"`: Generalized Linear Model with negative binomial dispersion parameter `method_alpha`.
-
-When event data exhibits overdispersion (variance significantly exceeds the mean), Poisson estimates may underestimate variance. You can test for overdispersion using Cameron and Trivedi's auxiliary regression test:
+* **Cumulative Mode (`run`)**: Progressively incorporates historical data up to each time boundary, tracking accumulating evidence and detecting the exact calendar date an emerging signal crosses threshold.
+* **Disjoint Mode (`run_disjoint`)**: Evaluates each time window independently (e.g. quarterly or annually) without historical accumulation. Ideal for detecting transient reporting anomalies, batch contaminations, or media-driven notoriety effects.
 
 ```python
-import pandas as pd
-from vigipy import convert, bcpnn
-from vigipy.utils import test_dispersion
-
-df = pd.read_csv("AE_count_data.csv")
-data = convert(df)
-
-# Test for overdispersion
-dispersion_info = test_dispersion(data)
-print(f"Dispersion ratio: {dispersion_info['dispersion']:.2f}")
-
-# If overdispersed (> 2), use the estimated alpha in Negative Binomial regression
-alpha = dispersion_info["alpha"] if dispersion_info["dispersion"] > 2 else 1.0
-res = bcpnn(data, expected_method="negative-binomial", method_alpha=alpha, min_events=3)
-```
-
----
-
-## Longitudinal Modeling
-
-The `LongitudinalModel` class evaluates disproportionality over time to monitor signal emergence, stability, and trajectory.
-
-You can run models in two modes:
-* **Cumulative (`run`)**: Progressively incorporates historical data up to each resampled time boundary, tracking accumulating evidence.
-* **Disjoint (`run_disjoint`)**: Evaluates each time window independently without historical accumulation.
-
-```python
-import pandas as pd
 from vigipy import LongitudinalModel, gps
 
-df = pd.read_csv("AE_time_series.csv")
-# Must contain: 'date', 'name', 'AE', and 'count' (or custom count_col)
+df_time = pd.read_csv("longitudinal_safety_data.csv")
+# Requires: 'date', 'name', 'AE', 'count'
 
-# Initialize grouped by calendar year ('YE', 'QE', 'ME')
-lm = LongitudinalModel(df, time_unit="YE", count_col="count")
+# Initialize with annual ('YE'), quarterly ('QE'), or monthly ('ME') slices
+lm = LongitudinalModel(df_time, time_unit="QE", count_col="count")
 
-# Run GPS cumulatively with hyperprior warm-starting and memory pruning
+# Run GPS cumulatively with hyperprior warm-starting across time slices
 lm.run(gps, warm_start=True, store_all_signals=False)
 
-# Or evaluate in parallel across CPU cores on disjoint intervals
-lm.regroup_dates("QE")
+# Or evaluate disjoint quarterly intervals in parallel across CPU cores
 lm.run_disjoint(gps, n_jobs=-1)
 
-# Access results chronologically: (timestamp, AnalysisResult)
+# Inspect chronological signal evolution
 for timestamp, result in lm.results:
     if result is not None:
-        print(f"Slice ending {timestamp.date()}: {result.num_signals} signals")
-        print(result.signals.head(2))
+        print(f"Quarter ending {timestamp.date()}: {result.num_signals} active signals")
+        print(result.signals[["Product", "Adverse Event", "Count", "quantile"]].head(2))
 ```
 
 ---
 
-## LASSO Signal Detection
+## Decision Guide: Which Tool Should I Use?
 
-LASSO regression models multiple products simultaneously, adjusting for co-prescriptions, confounding by indication, and polypharmacy.
+| Scenario | Recommended Workflow | Key Parameters |
+| :--- | :--- | :--- |
+| **Routine regulatory submission (FDA / EMA)** | `vg.convert()` $\rightarrow$ `vg.ror()` or `vg.prr()` | `min_events=3`, `ranking_statistic="CI"` |
+| **Automated screening across large database** | `vg.convert()` $\rightarrow$ `vg.gps()` or `vg.bcpnn()` | `ranking_statistic="quantile"`, `decision_metric="fdr"` |
+| **High polypharmacy / co-prescription confounding** | `vg.convert_binary(sparse=True)` $\rightarrow$ `vg.lasso()` | `relaxed=True`, `covariate_labels=["age", "sex"]` |
+| **Indication confounding & symptom clustering** | `vg.convert_binary()` $\rightarrow$ `vg.score_da()` | `latent_rank=5`, `syndromic_weight=0.5` |
+| **Investigating drug-drug or multi-drug interactions** | `vg.convert_ddi(max_order=2)` $\rightarrow$ `vg.score_ddi()` | `min_co_reports=5`, `interaction_model="multiplicative"` |
+| **Multi-method signal arbitration & triage** | `vg.consensus_analysis()` | `min_consensus=3` or `min_consensus=0.6` |
+| **Monitoring signal emergence over time** | `vg.LongitudinalModel()` | `time_unit="QE"`, `warm_start=True` |
 
-### 1. Relaxed Logistic LASSO with Confounder Adjustment (Recommended)
-For pharmacovigilance safety surveillance, use two-stage Relaxed LASSO (`relaxed=True`, default) for debiased adjusted reporting odds ratios (aROR), sparse memory efficiency, and demographic/clinical confounder adjustment:
+---
+
+## Result Exporting, Serialization & Logging
+
+### Structured Result Container (`AnalysisResult` & `ConsensusResult`)
+All analysis methods return structured `AnalysisResult` (or `ConsensusResult`) objects with built-in export utilities supporting Excel, Parquet, and CSV:
 
 ```python
-import pandas as pd
-from vigipy import convert_binary, lasso
+from pathlib import Path
+import vigipy as vg
 
-df = pd.read_csv("patient_reports.csv")
+result = vg.analyze(data, vg.GPSConfig(min_events=3))
 
-# Group concurrent medications by report_id, adjust for covariates, and use sparse storage
-container = convert_binary(
-    df,
-    product_label="name",
-    ae_label="AE",
-    report_id_label="report_id",
-    sparse=True,                        # Memory-efficient sparse CSR matrix
-    covariate_labels=["age", "sex"],    # Clinical/demographic confounders
-)
+# Access primary attributes
+signals_df = result.signals       # Filtered signals meeting decision criteria
+all_df = result.all_signals       # Full candidate dataset with all computed metrics (includes EBGM, LowerBound, UpperBound)
+num_alerts = result.num_signals   # Number of detected signals
+model_meta = result.params        # Audit trail of parameters used
 
-# Run multivariable Relaxed LASSO across all CPU cores
-result = lasso(
-    container,
-    min_events=3,
-    relaxed=True,                       # L1 screening + Stage 2 unpenalized refit (default)
-    n_jobs=-1,                          # Parallel execution across adverse events
-    decision_metric="lower_bound",      # Signal if 95% CI lower bound > 0
-)
-print(result.signals[["Product", "Adverse Event", "Count", "L1 Coefficient", "LASSO Coefficient", "aROR", "CI Lower", "CI Upper", "p_value"]])
-result.export("lasso_signals.xlsx")
+# Export to Excel (.xlsx), Parquet (.parquet), or CSV (.csv)
+# Accepts str or pathlib.Path
+result.export("safety_audit.xlsx")                   # Multi-tab workbook ('Signals' and 'all_data')
+result.export(Path("signals.parquet"))               # Fast, columnar Parquet export (default: which="signals")
+result.export("audit.parquet", which="both")          # Generates audit_signals.parquet & audit_all.parquet
+result.export("signals_only.csv")                    # Comma-separated signals export
 ```
 
-### 2. Linear LASSO with Information Criterion
-For continuous outcomes or linear shrinkage:
+### Logging & Diagnostics
+`vigipy` provides structured diagnostic logging via Python's standard `logging` library under the `"vigipy"` namespace:
 
 ```python
-bin_data = convert_binary(df, product_label="name", ae_label="AE", use_counts=False)
+import logging
 
-# Linear LASSO with Information Criterion model selection
-result = lasso(bin_data, use_IC=True, IC_criterion="bic", min_events=3)
-print(result.signals[["Product", "Adverse Event", "LASSO Coefficient", "CI Lower", "CI Upper"]])
-```
-
-### 3. Count Outcomes & GLM LASSO
-When aggregate event counts are used:
-
-```python
-bin_data = convert_binary(df, product_label="name", ae_label="AE", use_counts=True)
-
-# Fit Negative Binomial GLM with L1 regularization
-result = lasso(bin_data, use_glm=True, lasso_thresh=0.2, nb_alpha=1.0)
-result.export("lasso_glm_signals.csv")
+# Configure vigipy to display solver iterations, SVD factorizations, and GLM diagnostics
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.getLogger("vigipy").setLevel(logging.DEBUG)
 ```
 
 ---
 
-## Multi-Item Interaction Conversion
-
-To analyze interactions between co-occurring drugs or devices:
-
-```python
-from vigipy.utils.data_prep import convert_multi_item
-
-# Aggregate co-administered products
-multi_data = convert_multi_item(
-    df,
-    product_label=["suspect_drug_1", "suspect_drug_2"],
-    ae_label="AE",
-    count_label="count",
-    min_threshold=3,
-)
-```
-
-The returned `DataContainer` is fully compatible with `prr`, `ror`, `rfet`, `bcpnn`, and `gps`.
-
----
-
-## Result Inspection & Export
-
-All analysis methods return an `AnalysisResult` object:
-
-```python
-result = analyze(data, PRRConfig(min_events=3))
-
-# Filtered signals meeting decision criteria
-signals_df = result.signals
-
-# All evaluated candidate pairs with computed statistics
-all_df = result.all_signals
-
-# Number of identified signals
-count = result.num_signals
-
-# Input parameters and model metadata
-params_dict = result.params
-
-# Export to Excel (.xlsx) or CSV (.csv)
-result.export("output.xlsx")  # Writes 'Signals' and 'all_data' sheets
-result.export("output.csv")   # Writes signals DataFrame
-```
-
----
-
-## Authors
+## Authors & Citation
 
 * **David Beery** ([@Shakesbeery](https://github.com/Shakesbeery))
 
-## License
+### Citation
+If you use `vigipy` in your research or regulatory surveillance pipelines, please cite:
+```bibtex
+@software{beery2026vigipy,
+  author = {David Beery},
+  title = {vigipy: Disproportionality Analysis and Pharmacovigilance Toolkit in Python},
+  year = {2026},
+  url = {https://github.com/Shakesbeery/vigipy}
+}
+```
 
-This project is licensed under the [MIT License](LICENSE).
-
-## Acknowledgements
-
-* **Ismail Ahmed and Antoine Poncet** for the foundational design of the [PhViD](https://cran.r-project.org/web/packages/PhViD/index.html) package in R.
-* **Ross Ihaka** and **Catherine Loader** for early mathematical formulations of deviance and log-gamma approximations.
+### License
+`vigipy` is distributed under the [MIT License](LICENSE).

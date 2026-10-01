@@ -48,7 +48,8 @@ def lbe(
             if a is None:
                 a = lbe_a(m, lb)
             sdbound = np.sqrt((1 / (gamma(a + 1)) ** 2) * ((gamma(2 * a + 1) - (gamma(a + 1)) ** 2) / m))
-            pi0 = min(1, np.mean((-np.log(1 - pvals)) ** a) / gamma(a + 1))
+            pvals_clipped = np.clip(np.asarray(pvals, dtype=np.float64), 1e-15, 1.0 - 1e-12)
+            pi0 = min(1, max(0.0, float(np.mean((-np.log(1.0 - pvals_clipped)) ** a) / gamma(a + 1))))
             icpi0 = [0, min(1, pi0 - norm.ppf((1 - ci_level), 0, sdbound))]
 
         if qvalues:

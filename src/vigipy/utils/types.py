@@ -11,4 +11,4 @@ FreqRankingStatistic = Literal["p_value", "CI"]
 BCPNNRankingStatistic = Literal["p_value", "quantile"]
 GPSRankingStatistic = Literal["p_value", "quantile", "log2"]
 
-MethodName = Literal["prr", "ror", "rfet", "bcpnn", "gps", "lasso"]
+MethodName = Literal["prr", "ror", "rfet", "bcpnn", "gps", "lasso", "score", "score_ddi"]
