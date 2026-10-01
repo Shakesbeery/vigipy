@@ -661,6 +661,88 @@ class TestLongitudinalModel:
         df_summary = lm.summary()
         assert len(df_summary) == len(df_signals)
 
+    def test_longitudinal_time_decay_attenuates_isolated_spike(self):
+        # Create a controlled longitudinal dataset:
+        # DrugA + Nausea has an initial spike of 30 reports in 2020, then NO new reports.
+        # Other drugs continue to accumulate reports over 2021, 2022, 2023.
+        df_spike = pd.DataFrame({
+            "date": [
+                "2020-01-15", "2020-01-15", "2020-01-15",
+                "2021-01-15", "2021-01-15",
+                "2022-01-15", "2022-01-15",
+                "2023-01-15", "2023-01-15",
+            ],
+            "name": [
+                "DrugA", "DrugB", "DrugB",
+                "DrugB", "DrugB",
+                "DrugB", "DrugB",
+                "DrugB", "DrugB",
+            ],
+            "AE": [
+                "Nausea", "Headache", "Nausea",
+                "Headache", "Nausea",
+                "Headache", "Nausea",
+                "Headache", "Nausea",
+            ],
+            "count": [
+                30, 10, 10,
+                15, 15,
+                20, 20,
+                25, 25,
+            ],
+        })
+
+        # 1. Without decay (standard cumulative): DrugA + Nausea remains an alert indefinitely
+        lm_no_decay = LongitudinalModel(df_spike.copy(), time_unit="YE")
+        lm_no_decay.run(prr, False, min_events=3, decision_metric="rank")
+        df_no_decay = lm_no_decay.to_dataframe(which="all")
+        druga_no_decay = df_no_decay[df_no_decay["Product"] == "DrugA"]
+        # DrugA is present in all evaluated slices with Count >= 30
+        assert len(druga_no_decay) == 4
+        assert (druga_no_decay["Count"] >= 30).all()
+
+        # 2. With decay (half-life = 1 year): DrugA + Nausea decays smoothly over time
+        lm_decay = LongitudinalModel(df_spike.copy(), time_unit="YE", decay_half_life="1YE")
+        assert "decay_half_life='1YE'" in repr(lm_decay)
+        lm_decay.run(prr, False, min_events=3, decision_metric="rank")
+        df_decay = lm_decay.to_dataframe(which="all")
+        druga_decay = df_decay[df_decay["Product"] == "DrugA"].sort_values("date")
+
+        # Counts decay by half over each successive year:
+        counts = druga_decay["Count"].values
+        # In Years 1, 2, and 3, count decays by ~50% each year:
+        assert len(counts) == 3
+        np.testing.assert_allclose(counts[1] / counts[0], 0.5, rtol=0.05)
+        np.testing.assert_allclose(counts[2] / counts[1], 0.5, rtol=0.05)
+        # By Year 4 (2023), count decayed to ~1.93 (< min_events=3), naturally de-escalating out of the table:
+        assert counts[-1] < 4.0
+        year_2023_slice = df_decay[df_decay["date"].dt.year == 2023]
+        assert "DrugA" not in year_2023_slice["Product"].values
+
+
+    def test_longitudinal_decay_formats(self):
+        import pytest
+        from vigipy.LongitudinalModel.LongitudinalModel import _parse_half_life_days
+
+        assert _parse_half_life_days(None) is None
+        assert _parse_half_life_days(365) == 365.0
+        assert _parse_half_life_days("1Y") == 365.25
+        assert _parse_half_life_days("2YE") == 730.5
+        assert _parse_half_life_days("6M") == 6 * 30.4375
+        assert _parse_half_life_days("30D") == 30.0
+        assert _parse_half_life_days("14 days") == 14.0
+        assert _parse_half_life_days(pd.Timedelta(days=100)) == 100.0
+
+        with pytest.raises(ValueError, match="decay_half_life must be positive"):
+            _parse_half_life_days(0)
+
+        with pytest.raises(ValueError, match="decay_half_life must be positive"):
+            _parse_half_life_days(-10)
+
+        with pytest.raises(ValueError, match="Unable to parse decay_half_life"):
+            _parse_half_life_days("invalid_duration_string_xyz")
+
+
 
 
 # ---------------------------------------------------------------------------
