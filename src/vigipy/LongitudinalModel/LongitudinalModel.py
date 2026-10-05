@@ -80,15 +80,14 @@ def _apply_time_decay(
     count_col: str,
 ) -> pd.DataFrame:
     """Weight event counts in df using continuous exponential half-life decay relative to timestamp."""
-    df_weighted = df.copy()
-    row_dates = pd.to_datetime(df_weighted["date"])
+    row_dates = pd.to_datetime(df["date"])
     # Age in days (>= 0)
     age_days = (pd.to_datetime(timestamp) - row_dates).dt.total_seconds() / 86400.0
     age_days = np.maximum(0.0, age_days.values)
     # Exponential decay weights: w = 2^(-age / half_life)
     weights = np.power(2.0, -age_days / half_life_days)
-    df_weighted[count_col] = df_weighted[count_col].astype(np.float64) * weights
-    return df_weighted
+    weighted_counts = df[count_col].astype(np.float64) * weights
+    return df.assign(**{count_col: weighted_counts})
 
 
 def _fit_longitudinal_slice(

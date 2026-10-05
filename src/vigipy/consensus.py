@@ -36,7 +36,7 @@ def _extract_method_data(
     method: str, result: AnalysisResult
 ) -> tuple[str, pd.DataFrame]:
     """Extract and standardize columns from an individual AnalysisResult."""
-    df = result.all_signals.copy()
+    df = result.all_signals
 
     # 1. Determine primary score column
     score_col = None
@@ -553,7 +553,7 @@ def consensus_analysis(
         min_votes_int = int(min_consensus)
         signal_mask = master_df["votes"] >= min_votes_int
 
-    signals_df = master_df[signal_mask].copy().reset_index(drop=True)
+    signals_df = master_df[signal_mask].reset_index(drop=True)
     num_signals = len(signals_df)
 
     # Compute Method Agreement Matrices

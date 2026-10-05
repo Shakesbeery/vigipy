@@ -142,30 +142,47 @@ def _build_syndromic_laplacian(
     if n_events <= 1:
         return np.zeros((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
 
-    diag_s = np.diag(S_cooccur)
-    # Jaccard similarity: S_ik / (S_ii + S_kk - S_ik)
-    denom = diag_s[:, None] + diag_s[None, :] - S_cooccur
-    denom = np.maximum(denom, 1e-9)
-    W = np.divide(S_cooccur, denom, where=(denom > 0))
-    np.fill_diagonal(W, 0.0)
-    W = np.clip(W, 0.0, 1.0)
-    W[W < min_jaccard] = 0.0
-
-    # Symmetrize
-    W = 0.5 * (W + W.T)
-
-    d = np.sum(W, axis=1)
-    mask = d > 0
-
-    if not np.any(mask):
-        L_norm = np.zeros((n_events, n_events), dtype=np.float64)
-        clusters = np.zeros(n_events, dtype=int)
-        return L_norm, clusters
-
-    # Safe degree inversion: isolated vertices (d_i == 0) remain 0 so they are unpenalized
-    d_inv_sqrt = np.zeros_like(d)
-    d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
-    L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
+    if issparse(S_cooccur):
+        diag_s = S_cooccur.diagonal()
+        S_coo = S_cooccur.tocoo()
+        non_diag = S_coo.row != S_coo.col
+        rows = S_coo.row[non_diag]
+        cols = S_coo.col[non_diag]
+        vals = S_coo.data[non_diag]
+        denom_sp = diag_s[rows] + diag_s[cols] - vals
+        w_vals = np.where(denom_sp > 0, vals / np.maximum(denom_sp, 1e-9), 0.0)
+        w_vals = np.clip(w_vals, 0.0, 1.0)
+        keep = w_vals >= min_jaccard
+        W_sp = csr_matrix((w_vals[keep], (rows[keep], cols[keep])), shape=(n_events, n_events))
+        W = 0.5 * (W_sp + W_sp.T)
+        d = np.array(W.sum(axis=1)).ravel()
+        mask = d > 0
+        if not np.any(mask):
+            return csr_matrix((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
+        d_inv_sqrt = np.zeros_like(d)
+        d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
+        from scipy.sparse import diags
+        D_inv = diags(d_inv_sqrt)
+        L_norm = diags(mask.astype(np.float64)) - D_inv @ W @ D_inv
+        L_norm = L_norm.tocsr()
+    else:
+        diag_s = np.diag(S_cooccur)
+        denom = diag_s[:, None] + diag_s[None, :] - S_cooccur
+        denom = np.maximum(denom, 1e-9)
+        W = np.divide(S_cooccur, denom, where=(denom > 0))
+        np.fill_diagonal(W, 0.0)
+        W = np.clip(W, 0.0, 1.0)
+        W[W < min_jaccard] = 0.0
+        W = 0.5 * (W + W.T)
+        d = np.sum(W, axis=1)
+        mask = d > 0
+        if not np.any(mask):
+            return np.zeros((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
+        d_inv_sqrt = np.zeros_like(d)
+        d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
+        L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
+        if n_events > 500:
+            L_norm = csr_matrix(L_norm)
 
     # Spectral syndrome clustering: use Fiedler vector / second smallest eigenvector
     try:
@@ -220,7 +237,7 @@ def _extract_matrices_from_container(
 
         if issparse(X_mat) or issparse(Y_mat):
             C = (X_mat.T @ Y_mat).toarray()
-            S_cooccur = (Y_mat.T @ Y_mat).toarray()
+            S_cooccur = (Y_mat.T @ Y_mat)
         else:
             C = X_mat.T @ Y_mat
             S_cooccur = Y_mat.T @ Y_mat
@@ -388,7 +405,7 @@ def score_da(
     L_lip = _compute_lipschitz_constant(L_ae, syndromic_weight, seed=seed)
 
     # 3. Iterative Deflation Loop to Eliminate Masking
-    C_current = C.copy()
+    C_current = C
     Theta_est = np.zeros_like(C)
     Lambda_baseline = np.zeros_like(C)
 
@@ -606,7 +623,7 @@ def score_ddi(
             Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
         else:
             Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
-        S_cooccur = (Y_mat.T @ Y_mat).toarray() if issparse(Y_mat) else Y_mat.T @ Y_mat
+        S_cooccur = (Y_mat.T @ Y_mat) if issparse(Y_mat) else Y_mat.T @ Y_mat
     else:
         S_cooccur = C_all.T @ C_all
 
