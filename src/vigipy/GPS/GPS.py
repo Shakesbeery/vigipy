@@ -15,9 +15,7 @@ from ..utils.common import (
     build_bayesian_result,
 )
 from ..utils.types import DecisionMetric, GPSRankingStatistic, ExpectedMethod
-from ..utils.distribution_funcs.quantile_funcs import quantiles as _quantiles_scalar
-
-quantiles = np.vectorize(_quantiles_scalar, otypes=[np.float64])
+from ..utils.distribution_funcs.quantile_funcs import quantiles
 
 EPS = np.finfo(np.float32).eps
 BOUNDED_METHODS = {
@@ -57,16 +55,8 @@ def _optimize_gps_priors(
         data_cont = container.contingency
         n1__mat = data_cont.sum(axis=1)
         n_1_mat = data_cont.sum(axis=0)
-        rep = len(n_1_mat)
-        n1__c = np.tile(n1__mat.values, reps=rep)
-        rep = len(n1__mat)
-        n_1_c = np.repeat(n_1_mat.values, repeats=rep)
-        E_c = np.asarray(n1__c, dtype=np.float64) * n_1_c / N
-        n11_c_temp = []
-        for col in data_cont:
-            n11_c_temp.extend(list(data_cont[col]))
-        n11_c = np.asarray(n11_c_temp)
-
+        E_c = (np.outer(n1__mat.values, n_1_mat.values) / N).ravel(order="F")
+        n11_c = np.asarray(data_cont.values, dtype=np.float64).ravel(order="F")
         gammaln_n11_1_c = gammaln(n11_c + 1.0)
         p_out = minimize(
             non_truncated_likelihood,

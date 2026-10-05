@@ -261,8 +261,7 @@ def _fit_standard_logistic(
         z_sc = np.abs(coefs) / np.maximum(se_vec, 1e-9)
         p_vec = np.clip(2.0 * (1.0 - stats.norm.cdf(z_sc)), 0.0, 1.0)
     else:
-        X_arr_dense = X_mat.toarray() if issparse(X_mat) else X_mat
-        p_pred = np.clip(clf.predict_proba(X_arr_dense)[:, 1], 1e-6, 1.0 - 1e-6)
+        p_pred = np.clip(clf.predict_proba(X_mat)[:, 1], 1e-6, 1.0 - 1e-6)
         w = p_pred * (1.0 - p_pred)
 
         active_mask = np.abs(coefs) > 1e-6
@@ -274,13 +273,15 @@ def _fit_standard_logistic(
         p_vec = np.ones(n_features)
 
         if len(active_indices) > 0:
-            is_partition = bool(np.allclose(np.sum(X_arr_dense[:, active_indices], axis=1), 1.0))
+            X_active = X_mat[:, active_indices]
+            X_arr_dense = X_active.toarray() if issparse(X_active) else X_active
+            is_partition = bool(np.allclose(np.sum(X_arr_dense, axis=1), 1.0))
             if is_partition:
-                X_sub = X_arr_dense[:, active_indices]
+                X_sub = X_arr_dense
                 H = X_sub.T @ (w[:, None] * X_sub) + 1e-4 * np.eye(len(active_indices))
                 offset = 0
             else:
-                X_sub = np.column_stack([np.ones(n_samples), X_arr_dense[:, active_indices]])
+                X_sub = np.column_stack([np.ones(n_samples), X_arr_dense])
                 H = X_sub.T @ (w[:, None] * X_sub) + 1e-4 * np.eye(len(active_indices) + 1)
                 offset = 1
 
@@ -609,15 +610,13 @@ def lasso(
         if decision_metric == "lower_bound":
             signals = all_signals.loc[
                 (all_signals["CI Lower"] > lasso_thresh) & (all_signals["Count"] >= min_events)
-            ].copy()
+            ].reset_index(drop=True)
         else:
             signals = all_signals.loc[
                 (all_signals["LASSO Coefficient"] > lasso_thresh) & (all_signals["Count"] >= min_events)
-            ].copy()
+            ].reset_index(drop=True)
     else:
-        signals = all_signals.loc[all_signals["LASSO Coefficient"] > lasso_thresh].copy()
-
-    signals.reset_index(drop=True, inplace=True)
+        signals = all_signals.loc[all_signals["LASSO Coefficient"] > lasso_thresh].reset_index(drop=True)
 
     return AnalysisResult(
         all_signals=all_signals,

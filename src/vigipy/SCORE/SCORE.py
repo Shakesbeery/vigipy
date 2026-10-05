@@ -72,6 +72,58 @@ def _solve_fista_single_drug(
     return theta
 
 
+def _solve_fista_matrix(
+    Y_target: np.ndarray,
+    C_observed: np.ndarray,
+    L_ae: np.ndarray | csr_matrix,
+    lambda_1: float,
+    lambda_2: float,
+    L_lip: float,
+    max_iter: int = 50,
+    tol: float = 1e-4,
+) -> np.ndarray:
+    """Solve the box-constrained graph-regularized lasso problem for all drugs simultaneously via Matrix FISTA.
+
+    Solves for the entire (J x I) matrix Theta concurrently:
+        min_{0 <= Theta <= C_observed} 0.5 * ||Y_target - Theta||_F^2 + lambda_1 * ||Theta||_1 + 0.5 * lambda_2 * Tr(Theta L_ae Theta^T)
+    """
+    n_drugs, n_events = Y_target.shape
+    if n_drugs == 0 or n_events == 0:
+        return np.zeros_like(Y_target)
+
+    inv_L_lip = 1.0 / max(L_lip, 1e-6)
+    step_thresh = lambda_1 * inv_L_lip
+    c_max = np.maximum(0.0, C_observed)
+
+    # Initialize at feasible target projection
+    theta = np.clip(Y_target, 0.0, c_max)
+    # Identify rows that have no positive targets or no positive observations
+    inactive = (np.all(Y_target <= 0.0, axis=1) | np.all(C_observed <= 0.0, axis=1))
+    theta[inactive] = 0.0
+
+    z = theta.copy()
+    t = 1.0
+
+    for _ in range(max_iter):
+        # Matrix gradient across all drugs: Z + lambda_2 * (Z @ L_ae) - Y_target
+        grad = z + lambda_2 * (z @ L_ae) - Y_target
+        v = z - inv_L_lip * grad
+        theta_next = np.clip(v - step_thresh, 0.0, c_max)
+        theta_next[inactive] = 0.0
+
+        diff = np.max(np.abs(theta_next - theta))
+        if diff < tol:
+            theta = theta_next
+            break
+
+        t_next = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * t * t))
+        z = theta_next + ((t - 1.0) / t_next) * (theta_next - theta)
+        t = t_next
+        theta = theta_next
+
+    return theta
+
+
 def _build_syndromic_laplacian(
     S_cooccur: np.ndarray,
     min_jaccard: float = 0.01,
@@ -90,30 +142,47 @@ def _build_syndromic_laplacian(
     if n_events <= 1:
         return np.zeros((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
 
-    diag_s = np.diag(S_cooccur)
-    # Jaccard similarity: S_ik / (S_ii + S_kk - S_ik)
-    denom = diag_s[:, None] + diag_s[None, :] - S_cooccur
-    denom = np.maximum(denom, 1e-9)
-    W = np.divide(S_cooccur, denom, where=(denom > 0))
-    np.fill_diagonal(W, 0.0)
-    W = np.clip(W, 0.0, 1.0)
-    W[W < min_jaccard] = 0.0
-
-    # Symmetrize
-    W = 0.5 * (W + W.T)
-
-    d = np.sum(W, axis=1)
-    mask = d > 0
-
-    if not np.any(mask):
-        L_norm = np.zeros((n_events, n_events), dtype=np.float64)
-        clusters = np.zeros(n_events, dtype=int)
-        return L_norm, clusters
-
-    # Safe degree inversion: isolated vertices (d_i == 0) remain 0 so they are unpenalized
-    d_inv_sqrt = np.zeros_like(d)
-    d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
-    L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
+    if issparse(S_cooccur):
+        diag_s = S_cooccur.diagonal()
+        S_coo = S_cooccur.tocoo()
+        non_diag = S_coo.row != S_coo.col
+        rows = S_coo.row[non_diag]
+        cols = S_coo.col[non_diag]
+        vals = S_coo.data[non_diag]
+        denom_sp = diag_s[rows] + diag_s[cols] - vals
+        w_vals = np.where(denom_sp > 0, vals / np.maximum(denom_sp, 1e-9), 0.0)
+        w_vals = np.clip(w_vals, 0.0, 1.0)
+        keep = w_vals >= min_jaccard
+        W_sp = csr_matrix((w_vals[keep], (rows[keep], cols[keep])), shape=(n_events, n_events))
+        W = 0.5 * (W_sp + W_sp.T)
+        d = np.array(W.sum(axis=1)).ravel()
+        mask = d > 0
+        if not np.any(mask):
+            return csr_matrix((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
+        d_inv_sqrt = np.zeros_like(d)
+        d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
+        from scipy.sparse import diags
+        D_inv = diags(d_inv_sqrt)
+        L_norm = diags(mask.astype(np.float64)) - D_inv @ W @ D_inv
+        L_norm = L_norm.tocsr()
+    else:
+        diag_s = np.diag(S_cooccur)
+        denom = diag_s[:, None] + diag_s[None, :] - S_cooccur
+        denom = np.maximum(denom, 1e-9)
+        W = np.divide(S_cooccur, denom, where=(denom > 0))
+        np.fill_diagonal(W, 0.0)
+        W = np.clip(W, 0.0, 1.0)
+        W[W < min_jaccard] = 0.0
+        W = 0.5 * (W + W.T)
+        d = np.sum(W, axis=1)
+        mask = d > 0
+        if not np.any(mask):
+            return np.zeros((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
+        d_inv_sqrt = np.zeros_like(d)
+        d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
+        L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
+        if n_events > 500:
+            L_norm = csr_matrix(L_norm)
 
     # Spectral syndrome clustering: use Fiedler vector / second smallest eigenvector
     try:
@@ -140,6 +209,9 @@ def _build_syndromic_laplacian(
     except Exception:
         clusters = np.zeros(n_events, dtype=int)
 
+    if n_events > 500:
+        L_norm = csr_matrix(L_norm)
+
     return L_norm, clusters
 
 
@@ -165,7 +237,7 @@ def _extract_matrices_from_container(
 
         if issparse(X_mat) or issparse(Y_mat):
             C = (X_mat.T @ Y_mat).toarray()
-            S_cooccur = (Y_mat.T @ Y_mat).toarray()
+            S_cooccur = (Y_mat.T @ Y_mat)
         else:
             C = X_mat.T @ Y_mat
             S_cooccur = Y_mat.T @ Y_mat
@@ -333,7 +405,7 @@ def score_da(
     L_lip = _compute_lipschitz_constant(L_ae, syndromic_weight, seed=seed)
 
     # 3. Iterative Deflation Loop to Eliminate Masking
-    C_current = C.copy()
+    C_current = C
     Theta_est = np.zeros_like(C)
     Lambda_baseline = np.zeros_like(C)
 
@@ -347,36 +419,17 @@ def score_da(
         # Target excess rate for each drug
         Y_target = C - Lambda_baseline
 
-        # Solve box-constrained FISTA per drug
-        if n_jobs != 1 and n_drugs > 1:
-            from joblib import Parallel, delayed
-
-            theta_rows = Parallel(n_jobs=n_jobs)(
-                delayed(_solve_fista_single_drug)(
-                    y_target=Y_target[j, :],
-                    c_observed=C[j, :],
-                    L_ae=L_ae,
-                    lambda_1=sparsity_param,
-                    lambda_2=syndromic_weight,
-                    L_lip=L_lip,
-                    max_iter=max_iter,
-                    tol=tol,
-                )
-                for j in range(n_drugs)
-            )
-            Theta_est = np.array(theta_rows)
-        else:
-            for j in range(n_drugs):
-                Theta_est[j, :] = _solve_fista_single_drug(
-                    y_target=Y_target[j, :],
-                    c_observed=C[j, :],
-                    L_ae=L_ae,
-                    lambda_1=sparsity_param,
-                    lambda_2=syndromic_weight,
-                    L_lip=L_lip,
-                    max_iter=max_iter,
-                    tol=tol,
-                )
+        # Solve box-constrained FISTA across all drugs simultaneously via Matrix FISTA
+        Theta_est = _solve_fista_matrix(
+            Y_target=Y_target,
+            C_observed=C,
+            L_ae=L_ae,
+            lambda_1=sparsity_param,
+            lambda_2=syndromic_weight,
+            L_lip=L_lip,
+            max_iter=max_iter,
+            tol=tol,
+        )
 
         # Deflate table for next iteration
         if it < deflate_iterations - 1:
@@ -570,7 +623,7 @@ def score_ddi(
             Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
         else:
             Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
-        S_cooccur = (Y_mat.T @ Y_mat).toarray() if issparse(Y_mat) else Y_mat.T @ Y_mat
+        S_cooccur = (Y_mat.T @ Y_mat) if issparse(Y_mat) else Y_mat.T @ Y_mat
     else:
         S_cooccur = C_all.T @ C_all
 
@@ -643,37 +696,17 @@ def score_ddi(
             )
             archetypes.append(_classify_interaction_archetype(active_count, k_order))
 
-    # 5. Solve Box-Constrained FISTA for each pair
-    if n_jobs != 1 and n_pairs > 1:
-        from joblib import Parallel, delayed
-
-        theta_rows = Parallel(n_jobs=n_jobs)(
-            delayed(_solve_fista_single_drug)(
-                y_target=Y_target_pairs[p_idx, :],
-                c_observed=C_pairs[p_idx, :],
-                L_ae=L_ae,
-                lambda_1=sparsity_param,
-                lambda_2=syndromic_weight,
-                L_lip=L_lip,
-                max_iter=max_iter,
-                tol=tol,
-            )
-            for p_idx in range(n_pairs)
-        )
-        Theta_est = np.array(theta_rows)
-    else:
-        Theta_est = np.zeros_like(C_pairs)
-        for p_idx in range(n_pairs):
-            Theta_est[p_idx, :] = _solve_fista_single_drug(
-                y_target=Y_target_pairs[p_idx, :],
-                c_observed=C_pairs[p_idx, :],
-                L_ae=L_ae,
-                lambda_1=sparsity_param,
-                lambda_2=syndromic_weight,
-                L_lip=L_lip,
-                max_iter=max_iter,
-                tol=tol,
-            )
+    # 5. Solve Box-Constrained FISTA across all pairs simultaneously via Matrix FISTA
+    Theta_est = _solve_fista_matrix(
+        Y_target=Y_target_pairs,
+        C_observed=C_pairs,
+        L_ae=L_ae,
+        lambda_1=sparsity_param,
+        lambda_2=syndromic_weight,
+        L_lip=L_lip,
+        max_iter=max_iter,
+        tol=tol,
+    )
 
     # 6. Statistical Inference & Output Formatting
     counts_flat = C_pairs.flatten()
