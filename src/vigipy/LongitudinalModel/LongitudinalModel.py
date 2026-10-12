@@ -80,14 +80,60 @@ def _apply_time_decay(
     count_col: str,
 ) -> pd.DataFrame:
     """Weight event counts in df using continuous exponential half-life decay relative to timestamp."""
-    row_dates = pd.to_datetime(df["date"])
-    # Age in days (>= 0)
-    age_days = (pd.to_datetime(timestamp) - row_dates).dt.total_seconds() / 86400.0
-    age_days = np.maximum(0.0, age_days.values)
-    # Exponential decay weights: w = 2^(-age / half_life)
-    weights = np.power(2.0, -age_days / half_life_days)
-    weighted_counts = df[count_col].astype(np.float64) * weights
-    return df.assign(**{count_col: weighted_counts})
+    ts_ns = np.datetime64(timestamp, "ns")
+    dates_ns = df["date"].values.astype("datetime64[ns]")
+    age_days = np.maximum(0.0, (ts_ns - dates_ns).astype(np.float64) / 86_400_000_000_000.0)
+    weights = np.exp2(-age_days / half_life_days)
+    weighted_counts = df[count_col].to_numpy(dtype=np.float64, copy=False) * weights
+    res = df.copy(deep=False)
+    res[count_col] = weighted_counts
+    return res
+
+
+def _build_container_from_matrix(
+    mat: np.ndarray,
+    present_p: np.ndarray,
+    present_a: np.ndarray,
+    p_uniques: pd.Index,
+    ae_uniques: pd.Index,
+    product_label: str,
+    ae_label: str,
+    margin_threshold: int,
+) -> DataContainer:
+    """Construct a contingency DataContainer directly from a pre-aggregated 2D matrix."""
+    from ..utils.data_prep import count as flatten_count
+
+    mat_sub = mat[np.ix_(present_p, present_a)]
+    p_sub = p_uniques[present_p]
+    a_sub = ae_uniques[present_a]
+
+    if margin_threshold > 1:
+        r_tot = np.sum(mat_sub, axis=1) >= margin_threshold
+        c_tot = np.sum(mat_sub, axis=0) >= margin_threshold
+        mat_sub = mat_sub[np.ix_(r_tot, c_tot)]
+        p_sub = p_sub[r_tot]
+        a_sub = a_sub[c_tot]
+
+    r_sums_mask = np.sum(mat_sub, axis=1) >= margin_threshold
+    c_sums_mask = np.sum(mat_sub, axis=0) >= margin_threshold
+    mat_sub = mat_sub[np.ix_(r_sums_mask, c_sums_mask)]
+    p_sub = p_sub[r_sums_mask]
+    a_sub = a_sub[c_sums_mask]
+
+    data_cont = pd.DataFrame(mat_sub, index=p_sub, columns=a_sub)
+    data_cont.index.name = product_label
+    data_cont.columns.name = ae_label
+
+    col_sums = np.sum(data_cont, axis=0)
+    row_sums = np.sum(data_cont, axis=1)
+    data_df = flatten_count(data_cont, row_sums, col_sums)
+
+    return DataContainer(
+        data=data_df,
+        N=data_df["events"].sum(),
+        contingency=data_cont,
+        type="contingency",
+    )
 
 
 def _fit_longitudinal_slice(
@@ -210,6 +256,51 @@ class LongitudinalModel:
         elif conversion_type == "multi-item":
             return convert_multi_item(data, **conversion_kwargs)
 
+    def _prepare_base_index(
+        self, conversion_kwargs: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        c_kw = conversion_kwargs or {}
+        product_label = c_kw.get("product_label", "name")
+        ae_label = c_kw.get("ae_label", "AE")
+        count_label = c_kw.get("count_label", self.count_col)
+        margin_threshold = c_kw.get("margin_threshold", 1)
+
+        if (
+            not isinstance(product_label, str)
+            or not isinstance(ae_label, str)
+            or product_label not in self.data.columns
+            or ae_label not in self.data.columns
+            or count_label not in self.data.columns
+        ):
+            return None
+
+        p_codes, p_uniques = pd.factorize(self.data[product_label], sort=True)
+        ae_codes, ae_uniques = pd.factorize(self.data[ae_label], sort=True)
+        if np.any(p_codes < 0) or np.any(ae_codes < 0) or len(p_uniques) == 0 or len(ae_uniques) == 0:
+            return None
+
+        n_p = len(p_uniques)
+        n_a = len(ae_uniques)
+        flat_idx = p_codes * n_a + ae_codes
+        counts_arr = self.data[count_label].to_numpy(dtype=np.float64, copy=False)
+        is_int = np.issubdtype(self.data[count_label].dtype, np.integer)
+
+        return {
+            "p_codes": p_codes,
+            "p_uniques": p_uniques,
+            "ae_codes": ae_codes,
+            "ae_uniques": ae_uniques,
+            "n_p": n_p,
+            "n_a": n_a,
+            "flat_idx": flat_idx,
+            "counts_arr": counts_arr,
+            "is_int": is_int,
+            "orig_dtype": self.data[count_label].dtype,
+            "product_label": product_label,
+            "ae_label": ae_label,
+            "margin_threshold": margin_threshold,
+        }
+
     def run(
         self,
         model: Callable[..., AnalysisResult],
@@ -257,8 +348,69 @@ class LongitudinalModel:
                 stacklevel=2,
             )
 
+        fast_idx = self._prepare_base_index(conversion_kwargs) if conversion_type == "base" else None
+        if fast_idx is not None and hl_days is None:
+            cum_mat = np.zeros((fast_idx["n_p"], fast_idx["n_a"]), dtype=np.float64)
+            present_p = np.zeros(fast_idx["n_p"], dtype=bool)
+            present_a = np.zeros(fast_idx["n_a"], dtype=bool)
+            prev_idx = 0
+
+        def _get_cumulative_container(timestamp: pd.Timestamp, idx: int) -> DataContainer:
+            nonlocal cum_mat, present_p, present_a, prev_idx
+            if fast_idx is not None:
+                n_p, n_a = fast_idx["n_p"], fast_idx["n_a"]
+                flat_idx = fast_idx["flat_idx"]
+                counts_arr = fast_idx["counts_arr"]
+                p_codes, ae_codes = fast_idx["p_codes"], fast_idx["ae_codes"]
+
+                if hl_days is None:
+                    if idx > prev_idx:
+                        delta = np.bincount(
+                            flat_idx[prev_idx:idx],
+                            weights=counts_arr[prev_idx:idx],
+                            minlength=n_p * n_a,
+                        ).reshape(n_p, n_a)
+                        cum_mat = cum_mat + delta
+                        present_p[p_codes[prev_idx:idx]] = True
+                        present_a[ae_codes[prev_idx:idx]] = True
+                        prev_idx = idx
+                    mat_use = cum_mat.astype(fast_idx["orig_dtype"], copy=False) if fast_idx["is_int"] else cum_mat
+                    return _build_container_from_matrix(
+                        mat_use,
+                        present_p,
+                        present_a,
+                        fast_idx["p_uniques"],
+                        fast_idx["ae_uniques"],
+                        fast_idx["product_label"],
+                        fast_idx["ae_label"],
+                        fast_idx["margin_threshold"],
+                    )
+                else:
+                    ts_ns = np.datetime64(timestamp, "ns")
+                    age_days = np.maximum(
+                        0.0, (ts_ns - self._sorted_dates[:idx]).astype(np.float64) / 86_400_000_000_000.0
+                    )
+                    w_counts = counts_arr[:idx] * np.exp2(-age_days / hl_days)
+                    mat = np.bincount(flat_idx[:idx], weights=w_counts, minlength=n_p * n_a).reshape(n_p, n_a)
+                    p_pres = np.bincount(p_codes[:idx], minlength=n_p) > 0
+                    a_pres = np.bincount(ae_codes[:idx], minlength=n_a) > 0
+                    return _build_container_from_matrix(
+                        mat,
+                        p_pres,
+                        a_pres,
+                        fast_idx["p_uniques"],
+                        fast_idx["ae_uniques"],
+                        fast_idx["product_label"],
+                        fast_idx["ae_label"],
+                        fast_idx["margin_threshold"],
+                    )
+
+            subset = self.data.iloc[:idx]
+            if hl_days is not None:
+                subset = _apply_time_decay(subset, timestamp, hl_days, self.count_col)
+            return self._convert(subset, conversion_type, conversion_kwargs)
+
         if n_jobs != 1:
-            # Parallel slice dispatch: pass subset DataFrames to workers so conversion runs in parallel
             tasks = []
             for timestamp, count in counts.items():
                 if count == 0:
@@ -272,17 +424,15 @@ class LongitudinalModel:
                         tasks.append((timestamp, None, None))
                     continue
 
-                subset = self.data.iloc[:idx]
-                if hl_days is not None:
-                    subset = _apply_time_decay(subset, timestamp, hl_days, self.count_col)
-                tasks.append((timestamp, subset, dict(kwargs)))
+                sub_container = _get_cumulative_container(timestamp, idx)
+                tasks.append((timestamp, sub_container, dict(kwargs)))
 
             from joblib import Parallel, delayed
 
             raw_results = Parallel(n_jobs=n_jobs)(
                 delayed(_fit_longitudinal_slice)(
                     model,
-                    sub_df,
+                    sub_cont,
                     ts,
                     include_gaps,
                     kw,
@@ -290,7 +440,7 @@ class LongitudinalModel:
                     conversion_type,
                     conversion_kwargs,
                 )
-                for ts, sub_df, kw in tasks
+                for ts, sub_cont, kw in tasks
             )
             self.results = [r for r in raw_results if r is not None]
         else:
@@ -308,10 +458,7 @@ class LongitudinalModel:
                         self.results.append((timestamp, None))
                     continue
 
-                subset = self.data.iloc[:idx]
-                if hl_days is not None:
-                    subset = _apply_time_decay(subset, timestamp, hl_days, self.count_col)
-                sub_container = self._convert(subset, conversion_type, conversion_kwargs)
+                sub_container = _get_cumulative_container(timestamp, idx)
 
                 slice_kwargs = dict(kwargs)
                 if warm_start and is_gps and last_prior_param is not None and "prior_param" not in slice_kwargs:
@@ -362,6 +509,7 @@ class LongitudinalModel:
         effective_decay = decay_half_life if decay_half_life is not None else self.decay_half_life
         hl_days = _parse_half_life_days(effective_decay)
         counts = self.date_groups[self.count_col].sum()
+        fast_idx = self._prepare_base_index(conversion_kwargs) if conversion_type == "base" else None
 
         tasks = []
         prev_ts = None
@@ -385,10 +533,46 @@ class LongitudinalModel:
                     tasks.append((timestamp, None, None))
                 continue
 
-            subset = self.data.iloc[idx_start:idx_end]
-            if hl_days is not None:
-                subset = _apply_time_decay(subset, timestamp, hl_days, self.count_col)
-            tasks.append((timestamp, subset, dict(kwargs)))
+            if fast_idx is not None:
+                n_p, n_a = fast_idx["n_p"], fast_idx["n_a"]
+                flat_idx = fast_idx["flat_idx"][idx_start:idx_end]
+                counts_sub = fast_idx["counts_arr"][idx_start:idx_end]
+                p_sub = fast_idx["p_codes"][idx_start:idx_end]
+                a_sub = fast_idx["ae_codes"][idx_start:idx_end]
+
+                if hl_days is not None:
+                    ts_ns = np.datetime64(timestamp, "ns")
+                    age_days = np.maximum(
+                        0.0,
+                        (ts_ns - self._sorted_dates[idx_start:idx_end]).astype(np.float64) / 86_400_000_000_000.0,
+                    )
+                    w_counts = counts_sub * np.exp2(-age_days / hl_days)
+                else:
+                    w_counts = counts_sub
+
+                mat = np.bincount(flat_idx, weights=w_counts, minlength=n_p * n_a).reshape(n_p, n_a)
+                if hl_days is None and fast_idx["is_int"]:
+                    mat = mat.astype(fast_idx["orig_dtype"], copy=False)
+
+                p_pres = np.bincount(p_sub, minlength=n_p) > 0
+                a_pres = np.bincount(a_sub, minlength=n_a) > 0
+                sub_container = _build_container_from_matrix(
+                    mat,
+                    p_pres,
+                    a_pres,
+                    fast_idx["p_uniques"],
+                    fast_idx["ae_uniques"],
+                    fast_idx["product_label"],
+                    fast_idx["ae_label"],
+                    fast_idx["margin_threshold"],
+                )
+            else:
+                subset = self.data.iloc[idx_start:idx_end]
+                if hl_days is not None:
+                    subset = _apply_time_decay(subset, timestamp, hl_days, self.count_col)
+                sub_container = self._convert(subset, conversion_type, conversion_kwargs)
+
+            tasks.append((timestamp, sub_container, dict(kwargs)))
 
         if n_jobs != 1:
             from joblib import Parallel, delayed
@@ -396,7 +580,7 @@ class LongitudinalModel:
             raw_results = Parallel(n_jobs=n_jobs)(
                 delayed(_fit_longitudinal_slice)(
                     model,
-                    sub_df,
+                    sub_cont,
                     ts,
                     include_gaps,
                     kw,
@@ -404,16 +588,15 @@ class LongitudinalModel:
                     conversion_type,
                     conversion_kwargs,
                 )
-                for ts, sub_df, kw in tasks
+                for ts, sub_cont, kw in tasks
             )
             self.results = [r for r in raw_results if r is not None]
         else:
-            for ts, subset, kw in tasks:
-                if subset is None:
+            for ts, sub_container, kw in tasks:
+                if sub_container is None:
                     if include_gaps:
                         self.results.append((ts, None))
                 else:
-                    sub_container = self._convert(subset, conversion_type, conversion_kwargs)
                     self._run_model(model, sub_container, ts, include_gaps, kw, store_all_signals)
 
     def _run_model(
@@ -464,21 +647,18 @@ class LongitudinalModel:
             return pd.DataFrame()
 
         which_key = "signals" if which in ("signals", "alert", "alerts") else "all_signals"
-        frames = []
-
-        for timestamp, res in self.results:
-            if res is None:
-                continue
-            table = getattr(res, which_key, None)
-            if table is not None and not table.empty:
-                df_slice = table.copy()
-                df_slice.insert(0, "date", timestamp)
-                frames.append(df_slice)
+        frames = [
+            table.assign(date=timestamp)
+            for timestamp, res in self.results
+            if res is not None and (table := getattr(res, which_key, None)) is not None and not table.empty
+        ]
 
         if not frames:
             return pd.DataFrame()
 
-        return pd.concat(frames, ignore_index=True)
+        out = pd.concat(frames, ignore_index=True)
+        cols = ["date"] + [c for c in out.columns if c != "date"]
+        return out[cols]
 
     def summary(self) -> pd.DataFrame:
         """Alias for to_dataframe(which='signals'). Returns all longitudinal alerts."""
