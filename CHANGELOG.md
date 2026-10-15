@@ -1,4 +1,21 @@
-#Changelog
+# Changelog
+
+## 3.4.2
+
+### Added
+- Continuous exponential time decay (`decay_half_life`) in `LongitudinalModel` (supports duration strings like `'1Y'`, `'365D'`, `'6M'`, or numeric days).
+
+### Changed
+- Incremental $O(N)$ accumulation for longitudinal surveillance: pre-factorized string indices and semigroup exponential decay scaling (`C_k = C_{k-1} * 2^(-dt/half_life) + dC_k`).
+- True $O(1)$ constant slice memory architecture for sequential `run()` and `run_disjoint()`.
+- Lazy task generator streaming for multi-core `n_jobs != 1` execution, capping concurrent memory at $O(\text{n\_jobs})$.
+- Vectorized contingency matrix construction using `pd.factorize(sort=True)` and `np.bincount()` in `compute_contingency()`.
+- Fast zero-copy panel concatenation in `to_dataframe()`.
+
+### Fixed
+- Robust handling of missing (`NaN`) values in `LongitudinalModel` base index preparation without falling back to slow Pandas pivoting.
+- Replaced hardcoded nanosecond constant with resolution-agnostic `np.timedelta64(1, 'D')` division.
+- Non-deterministic quicksort tie-breaking in PRR and ROR regression tests.
 
 ## 0.2.1
 

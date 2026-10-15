@@ -6,10 +6,10 @@
 
 > [!IMPORTANT]
 > **What's New in `vigipy`**
+> - **High-Performance Longitudinal Engine & Time Decay (v3.4.2)**: Continuous exponential half-life time decay (`decay_half_life`), $O(N)$ incremental accumulation via semigroup scaling, streaming parallel slice execution, and $O(1)$ constant-memory surveillance.
 > - **SCORE-DA & SCORE-DDI**: A novel syndromic outlier estimation framework combining low-rank indication absorption, patient-level Graph Laplacian regularization, non-negative FISTA optimization, and higher-order multi-drug interaction discovery (`max_order=2, 3, ...`).
 > - **Cross-Method Consensus Engine (`consensus_analysis`)**: Triangulate alerts across frequentist, Bayesian, regression, and syndromic methods with agreement tiers, vote tallying, and concordance analytics (Jaccard, Cohen's Kappa, Spearman).
 > - **Two-Stage Relaxed LASSO**: Unbiased adjusted reporting odds ratios ($\text{aROR}$) with sparse memory scaling and clinical confounder adjustment (e.g. Age, Sex).
-> - **Production-Grade Longitudinal Pipeline**: Multi-core time-slice parallelism, closed-form analytical GPS likelihoods, and hyperprior warm-starting.
 
 ---
 
@@ -298,6 +298,8 @@ Post-market safety surveillance requires monitoring how disproportionality metri
 
 * **Cumulative Mode (`run`)**: Progressively incorporates historical data up to each time boundary, tracking accumulating evidence and detecting the exact calendar date an emerging signal crosses threshold.
 * **Disjoint Mode (`run_disjoint`)**: Evaluates each time window independently (e.g. quarterly or annually) without historical accumulation. Ideal for detecting transient reporting anomalies, batch contaminations, or media-driven notoriety effects.
+* **Continuous Exponential Time Decay (`decay_half_life`)**: Historical reports naturally attenuate over time as $2^{-\Delta t / \lambda}$ unless reinforced by recent reports, eliminating stale historical notoriety bursts. Computed in true $O(N)$ time via semigroup scaling.
+* **Memory-Bounded Streaming**: Evaluates each time slice in constant $O(1)$ memory, preventing OOM crashes across hundreds of reporting periods.
 
 ```python
 from vigipy import LongitudinalModel, gps
@@ -308,17 +310,15 @@ df_time = pd.read_csv("longitudinal_safety_data.csv")
 # Initialize with annual ('YE'), quarterly ('QE'), or monthly ('ME') slices
 lm = LongitudinalModel(df_time, time_unit="QE", count_col="count")
 
-# Run GPS cumulatively with hyperprior warm-starting across time slices
-lm.run(gps, warm_start=True, store_all_signals=False)
+# Run GPS cumulatively with exponential time decay (e.g. 1-year half-life) and hyperprior warm-starting
+lm.run(gps, decay_half_life="365D", warm_start=True, store_all_signals=False)
 
 # Or evaluate disjoint quarterly intervals in parallel across CPU cores
 lm.run_disjoint(gps, n_jobs=-1)
 
-# Inspect chronological signal evolution
-for timestamp, result in lm.results:
-    if result is not None:
-        print(f"Quarter ending {timestamp.date()}: {result.num_signals} active signals")
-        print(result.signals[["Product", "Adverse Event", "Count", "quantile"]].head(2))
+# Export complete chronological panel across all slices into a tidy DataFrame
+df_panel = lm.to_dataframe(which="signals")
+print(df_panel.head())
 ```
 
 ---
