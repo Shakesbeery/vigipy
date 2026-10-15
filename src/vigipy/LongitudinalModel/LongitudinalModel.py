@@ -80,9 +80,9 @@ def _apply_time_decay(
     count_col: str,
 ) -> pd.DataFrame:
     """Weight event counts in df using continuous exponential half-life decay relative to timestamp."""
-    ts_ns = np.datetime64(timestamp, "ns")
-    dates_ns = df["date"].values.astype("datetime64[ns]")
-    age_days = np.maximum(0.0, (ts_ns - dates_ns).astype(np.float64) / 86_400_000_000_000.0)
+    ts_dt = np.datetime64(timestamp)
+    dates_dt = df["date"].values.astype("datetime64[ns]")
+    age_days = np.maximum(0.0, (ts_dt - dates_dt) / np.timedelta64(1, "D"))
     weights = np.exp2(-age_days / half_life_days)
     weighted_counts = df[count_col].to_numpy(dtype=np.float64, copy=False) * weights
     res = df.copy(deep=False)
@@ -108,29 +108,35 @@ def _build_container_from_matrix(
     a_sub = ae_uniques[present_a]
 
     if margin_threshold > 1:
-        r_tot = np.sum(mat_sub, axis=1) >= margin_threshold
-        c_tot = np.sum(mat_sub, axis=0) >= margin_threshold
-        mat_sub = mat_sub[np.ix_(r_tot, c_tot)]
-        p_sub = p_sub[r_tot]
-        a_sub = a_sub[c_tot]
-
-    r_sums_mask = np.sum(mat_sub, axis=1) >= margin_threshold
-    c_sums_mask = np.sum(mat_sub, axis=0) >= margin_threshold
-    mat_sub = mat_sub[np.ix_(r_sums_mask, c_sums_mask)]
-    p_sub = p_sub[r_sums_mask]
-    a_sub = a_sub[c_sums_mask]
+        while True:
+            r_mask = np.sum(mat_sub, axis=1) >= margin_threshold
+            c_mask = np.sum(mat_sub, axis=0) >= margin_threshold
+            if np.all(r_mask) and np.all(c_mask):
+                break
+            mat_sub = mat_sub[np.ix_(r_mask, c_mask)]
+            p_sub = p_sub[r_mask]
+            a_sub = a_sub[c_mask]
+            if mat_sub.size == 0:
+                break
+    else:
+        r_mask = np.sum(mat_sub, axis=1) >= 1
+        c_mask = np.sum(mat_sub, axis=0) >= 1
+        if not (np.all(r_mask) and np.all(c_mask)):
+            mat_sub = mat_sub[np.ix_(r_mask, c_mask)]
+            p_sub = p_sub[r_mask]
+            a_sub = a_sub[c_mask]
 
     data_cont = pd.DataFrame(mat_sub, index=p_sub, columns=a_sub)
     data_cont.index.name = product_label
     data_cont.columns.name = ae_label
 
-    col_sums = np.sum(data_cont, axis=0)
-    row_sums = np.sum(data_cont, axis=1)
+    row_sums = np.sum(mat_sub, axis=1)
+    col_sums = np.sum(mat_sub, axis=0)
     data_df = flatten_count(data_cont, row_sums, col_sums)
 
     return DataContainer(
         data=data_df,
-        N=data_df["events"].sum(),
+        N=data_df["events"].sum() if len(data_df) > 0 else 0,
         contingency=data_cont,
         type="contingency",
     )
@@ -276,13 +282,23 @@ class LongitudinalModel:
 
         p_codes, p_uniques = pd.factorize(self.data[product_label], sort=True)
         ae_codes, ae_uniques = pd.factorize(self.data[ae_label], sort=True)
-        if np.any(p_codes < 0) or np.any(ae_codes < 0) or len(p_uniques) == 0 or len(ae_uniques) == 0:
+        if len(p_uniques) == 0 or len(ae_uniques) == 0:
             return None
+
+        valid_mask = (p_codes >= 0) & (ae_codes >= 0)
+        has_invalid = not np.all(valid_mask)
+        if has_invalid:
+            p_codes = p_codes[valid_mask]
+            ae_codes = ae_codes[valid_mask]
+            counts_arr = self.data[count_label].to_numpy(dtype=np.float64, copy=False)[valid_mask]
+            dates_arr = self._sorted_dates[valid_mask]
+        else:
+            counts_arr = self.data[count_label].to_numpy(dtype=np.float64, copy=False)
+            dates_arr = self._sorted_dates
 
         n_p = len(p_uniques)
         n_a = len(ae_uniques)
         flat_idx = p_codes * n_a + ae_codes
-        counts_arr = self.data[count_label].to_numpy(dtype=np.float64, copy=False)
         is_int = np.issubdtype(self.data[count_label].dtype, np.integer)
 
         return {
@@ -294,6 +310,7 @@ class LongitudinalModel:
             "n_a": n_a,
             "flat_idx": flat_idx,
             "counts_arr": counts_arr,
+            "dates_arr": dates_arr,
             "is_int": is_int,
             "orig_dtype": self.data[count_label].dtype,
             "product_label": product_label,
@@ -349,19 +366,24 @@ class LongitudinalModel:
             )
 
         fast_idx = self._prepare_base_index(conversion_kwargs) if conversion_type == "base" else None
-        if fast_idx is not None and hl_days is None:
+        dates_to_search = fast_idx["dates_arr"] if fast_idx is not None else self._sorted_dates
+
+        if fast_idx is not None:
             cum_mat = np.zeros((fast_idx["n_p"], fast_idx["n_a"]), dtype=np.float64)
             present_p = np.zeros(fast_idx["n_p"], dtype=bool)
             present_a = np.zeros(fast_idx["n_a"], dtype=bool)
             prev_idx = 0
+            prev_ts_dt: np.datetime64 | None = None
 
         def _get_cumulative_container(timestamp: pd.Timestamp, idx: int) -> DataContainer:
-            nonlocal cum_mat, present_p, present_a, prev_idx
+            nonlocal cum_mat, present_p, present_a, prev_idx, prev_ts_dt
             if fast_idx is not None:
                 n_p, n_a = fast_idx["n_p"], fast_idx["n_a"]
                 flat_idx = fast_idx["flat_idx"]
                 counts_arr = fast_idx["counts_arr"]
                 p_codes, ae_codes = fast_idx["p_codes"], fast_idx["ae_codes"]
+                dates_arr = fast_idx["dates_arr"]
+                ts_dt = np.datetime64(timestamp)
 
                 if hl_days is None:
                     if idx > prev_idx:
@@ -370,40 +392,46 @@ class LongitudinalModel:
                             weights=counts_arr[prev_idx:idx],
                             minlength=n_p * n_a,
                         ).reshape(n_p, n_a)
-                        cum_mat = cum_mat + delta
+                        cum_mat += delta
                         present_p[p_codes[prev_idx:idx]] = True
                         present_a[ae_codes[prev_idx:idx]] = True
                         prev_idx = idx
-                    mat_use = cum_mat.astype(fast_idx["orig_dtype"], copy=False) if fast_idx["is_int"] else cum_mat
-                    return _build_container_from_matrix(
-                        mat_use,
-                        present_p,
-                        present_a,
-                        fast_idx["p_uniques"],
-                        fast_idx["ae_uniques"],
-                        fast_idx["product_label"],
-                        fast_idx["ae_label"],
-                        fast_idx["margin_threshold"],
-                    )
                 else:
-                    ts_ns = np.datetime64(timestamp, "ns")
-                    age_days = np.maximum(
-                        0.0, (ts_ns - self._sorted_dates[:idx]).astype(np.float64) / 86_400_000_000_000.0
-                    )
-                    w_counts = counts_arr[:idx] * np.exp2(-age_days / hl_days)
-                    mat = np.bincount(flat_idx[:idx], weights=w_counts, minlength=n_p * n_a).reshape(n_p, n_a)
-                    p_pres = np.bincount(p_codes[:idx], minlength=n_p) > 0
-                    a_pres = np.bincount(ae_codes[:idx], minlength=n_a) > 0
-                    return _build_container_from_matrix(
-                        mat,
-                        p_pres,
-                        a_pres,
-                        fast_idx["p_uniques"],
-                        fast_idx["ae_uniques"],
-                        fast_idx["product_label"],
-                        fast_idx["ae_label"],
-                        fast_idx["margin_threshold"],
-                    )
+                    # Continuous exponential time decay via semigroup scaling:
+                    # Decay accumulated counts from previous slice, then add decayed new arrivals.
+                    if prev_ts_dt is not None:
+                        elapsed_days = np.maximum(0.0, (ts_dt - prev_ts_dt) / np.timedelta64(1, "D"))
+                        if elapsed_days > 0.0:
+                            cum_mat *= np.exp2(-elapsed_days / hl_days)
+
+                    if idx > prev_idx:
+                        new_age_days = np.maximum(
+                            0.0, (ts_dt - dates_arr[prev_idx:idx]) / np.timedelta64(1, "D")
+                        )
+                        w_counts = counts_arr[prev_idx:idx] * np.exp2(-new_age_days / hl_days)
+                        delta = np.bincount(
+                            flat_idx[prev_idx:idx],
+                            weights=w_counts,
+                            minlength=n_p * n_a,
+                        ).reshape(n_p, n_a)
+                        cum_mat += delta
+                        present_p[p_codes[prev_idx:idx]] = True
+                        present_a[ae_codes[prev_idx:idx]] = True
+                        prev_idx = idx
+
+                    prev_ts_dt = ts_dt
+
+                mat_use = cum_mat.astype(fast_idx["orig_dtype"], copy=False) if (hl_days is None and fast_idx["is_int"]) else cum_mat
+                return _build_container_from_matrix(
+                    mat_use,
+                    present_p,
+                    present_a,
+                    fast_idx["p_uniques"],
+                    fast_idx["ae_uniques"],
+                    fast_idx["product_label"],
+                    fast_idx["ae_label"],
+                    fast_idx["margin_threshold"],
+                )
 
             subset = self.data.iloc[:idx]
             if hl_days is not None:
@@ -411,21 +439,21 @@ class LongitudinalModel:
             return self._convert(subset, conversion_type, conversion_kwargs)
 
         if n_jobs != 1:
-            tasks = []
-            for timestamp, count in counts.items():
-                if count == 0:
-                    if include_gaps:
-                        tasks.append((timestamp, None, None))
-                    continue
+            def _task_generator():
+                for timestamp, count in counts.items():
+                    if count == 0:
+                        if include_gaps:
+                            yield (timestamp, None, None)
+                        continue
 
-                idx = int(np.searchsorted(self._sorted_dates, np.datetime64(timestamp), side="right"))
-                if idx == 0:
-                    if include_gaps:
-                        tasks.append((timestamp, None, None))
-                    continue
+                    idx = int(np.searchsorted(dates_to_search, np.datetime64(timestamp), side="right"))
+                    if idx == 0:
+                        if include_gaps:
+                            yield (timestamp, None, None)
+                        continue
 
-                sub_container = _get_cumulative_container(timestamp, idx)
-                tasks.append((timestamp, sub_container, dict(kwargs)))
+                    sub_container = _get_cumulative_container(timestamp, idx)
+                    yield (timestamp, sub_container, dict(kwargs))
 
             from joblib import Parallel, delayed
 
@@ -440,11 +468,11 @@ class LongitudinalModel:
                     conversion_type,
                     conversion_kwargs,
                 )
-                for ts, sub_cont, kw in tasks
+                for ts, sub_cont, kw in _task_generator()
             )
             self.results = [r for r in raw_results if r is not None]
         else:
-            # Sequential slice processing with warm-start support
+            # Sequential slice processing with warm-start support: O(1) memory per slice
             last_prior_param = None
             for timestamp, count in counts.items():
                 if count == 0:
@@ -452,7 +480,7 @@ class LongitudinalModel:
                         self.results.append((timestamp, None))
                     continue
 
-                idx = int(np.searchsorted(self._sorted_dates, np.datetime64(timestamp), side="right"))
+                idx = int(np.searchsorted(dates_to_search, np.datetime64(timestamp), side="right"))
                 if idx == 0:
                     if include_gaps:
                         self.results.append((timestamp, None))
@@ -510,29 +538,9 @@ class LongitudinalModel:
         hl_days = _parse_half_life_days(effective_decay)
         counts = self.date_groups[self.count_col].sum()
         fast_idx = self._prepare_base_index(conversion_kwargs) if conversion_type == "base" else None
+        dates_to_search = fast_idx["dates_arr"] if fast_idx is not None else self._sorted_dates
 
-        tasks = []
-        prev_ts = None
-        for timestamp, count in counts.items():
-            if count == 0:
-                if include_gaps:
-                    tasks.append((timestamp, None, None))
-                prev_ts = timestamp
-                continue
-
-            idx_start = 0 if prev_ts is None else int(
-                np.searchsorted(self._sorted_dates, np.datetime64(prev_ts), side="right")
-            )
-            idx_end = int(
-                np.searchsorted(self._sorted_dates, np.datetime64(timestamp), side="right")
-            )
-            prev_ts = timestamp
-
-            if idx_start >= idx_end:
-                if include_gaps:
-                    tasks.append((timestamp, None, None))
-                continue
-
+        def _get_disjoint_container(timestamp: pd.Timestamp, idx_start: int, idx_end: int) -> DataContainer:
             if fast_idx is not None:
                 n_p, n_a = fast_idx["n_p"], fast_idx["n_a"]
                 flat_idx = fast_idx["flat_idx"][idx_start:idx_end]
@@ -541,11 +549,9 @@ class LongitudinalModel:
                 a_sub = fast_idx["ae_codes"][idx_start:idx_end]
 
                 if hl_days is not None:
-                    ts_ns = np.datetime64(timestamp, "ns")
-                    age_days = np.maximum(
-                        0.0,
-                        (ts_ns - self._sorted_dates[idx_start:idx_end]).astype(np.float64) / 86_400_000_000_000.0,
-                    )
+                    ts_dt = np.datetime64(timestamp)
+                    dates_sub = fast_idx["dates_arr"][idx_start:idx_end]
+                    age_days = np.maximum(0.0, (ts_dt - dates_sub) / np.timedelta64(1, "D"))
                     w_counts = counts_sub * np.exp2(-age_days / hl_days)
                 else:
                     w_counts = counts_sub
@@ -556,7 +562,7 @@ class LongitudinalModel:
 
                 p_pres = np.bincount(p_sub, minlength=n_p) > 0
                 a_pres = np.bincount(a_sub, minlength=n_a) > 0
-                sub_container = _build_container_from_matrix(
+                return _build_container_from_matrix(
                     mat,
                     p_pres,
                     a_pres,
@@ -570,11 +576,59 @@ class LongitudinalModel:
                 subset = self.data.iloc[idx_start:idx_end]
                 if hl_days is not None:
                     subset = _apply_time_decay(subset, timestamp, hl_days, self.count_col)
-                sub_container = self._convert(subset, conversion_type, conversion_kwargs)
+                return self._convert(subset, conversion_type, conversion_kwargs)
 
-            tasks.append((timestamp, sub_container, dict(kwargs)))
+        if n_jobs == 1:
+            # Sequential execution: O(1) memory per slice
+            prev_ts = None
+            for timestamp, count in counts.items():
+                if count == 0:
+                    if include_gaps:
+                        self.results.append((timestamp, None))
+                    prev_ts = timestamp
+                    continue
 
-        if n_jobs != 1:
+                idx_start = 0 if prev_ts is None else int(
+                    np.searchsorted(dates_to_search, np.datetime64(prev_ts), side="right")
+                )
+                idx_end = int(
+                    np.searchsorted(dates_to_search, np.datetime64(timestamp), side="right")
+                )
+                prev_ts = timestamp
+
+                if idx_start >= idx_end:
+                    if include_gaps:
+                        self.results.append((timestamp, None))
+                    continue
+
+                sub_container = _get_disjoint_container(timestamp, idx_start, idx_end)
+                self._run_model(model, sub_container, timestamp, include_gaps, kwargs, store_all_signals)
+        else:
+            def _disjoint_task_generator():
+                prev_ts = None
+                for timestamp, count in counts.items():
+                    if count == 0:
+                        if include_gaps:
+                            yield (timestamp, None, None)
+                        prev_ts = timestamp
+                        continue
+
+                    idx_start = 0 if prev_ts is None else int(
+                        np.searchsorted(dates_to_search, np.datetime64(prev_ts), side="right")
+                    )
+                    idx_end = int(
+                        np.searchsorted(dates_to_search, np.datetime64(timestamp), side="right")
+                    )
+                    prev_ts = timestamp
+
+                    if idx_start >= idx_end:
+                        if include_gaps:
+                            yield (timestamp, None, None)
+                        continue
+
+                    sub_container = _get_disjoint_container(timestamp, idx_start, idx_end)
+                    yield (timestamp, sub_container, dict(kwargs))
+
             from joblib import Parallel, delayed
 
             raw_results = Parallel(n_jobs=n_jobs)(
@@ -588,16 +642,9 @@ class LongitudinalModel:
                     conversion_type,
                     conversion_kwargs,
                 )
-                for ts, sub_cont, kw in tasks
+                for ts, sub_cont, kw in _disjoint_task_generator()
             )
             self.results = [r for r in raw_results if r is not None]
-        else:
-            for ts, sub_container, kw in tasks:
-                if sub_container is None:
-                    if include_gaps:
-                        self.results.append((ts, None))
-                else:
-                    self._run_model(model, sub_container, ts, include_gaps, kw, store_all_signals)
 
     def _run_model(
         self,
@@ -647,18 +694,21 @@ class LongitudinalModel:
             return pd.DataFrame()
 
         which_key = "signals" if which in ("signals", "alert", "alerts") else "all_signals"
-        frames = [
-            table.assign(date=timestamp)
+        valid_items = [
+            (timestamp, table)
             for timestamp, res in self.results
             if res is not None and (table := getattr(res, which_key, None)) is not None and not table.empty
         ]
 
-        if not frames:
+        if not valid_items:
             return pd.DataFrame()
 
-        out = pd.concat(frames, ignore_index=True)
-        cols = ["date"] + [c for c in out.columns if c != "date"]
-        return out[cols]
+        timestamps, tables = zip(*valid_items)
+        lengths = [len(t) for t in tables]
+        out = pd.concat(tables, ignore_index=True)
+        date_col = pd.DatetimeIndex(np.repeat(timestamps, lengths))
+        out.insert(0, "date", date_col)
+        return out
 
     def summary(self) -> pd.DataFrame:
         """Alias for to_dataframe(which='signals'). Returns all longitudinal alerts."""
