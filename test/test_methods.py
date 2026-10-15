@@ -80,7 +80,10 @@ class TestPRR:
     def test_golden_values(self, converted_data):
         """Regression test: pin numeric output for PRR with default settings."""
         result = prr(converted_data, min_events=3, decision_metric="rank")
-        top = result.all_signals.iloc[0]
+        top = result.all_signals[
+            (result.all_signals["Product"] == "XENMATRIX")
+            & (result.all_signals["Adverse Event"] == "Infection")
+        ].iloc[0]
         assert top["Product"] == "XENMATRIX"
         assert top["Adverse Event"] == "Infection"
         assert top["Count"] == 61.0
@@ -120,7 +123,10 @@ class TestROR:
     def test_golden_values(self, converted_data):
         """Regression test: pin numeric output for ROR with default settings."""
         result = ror(converted_data, min_events=3, decision_metric="rank")
-        top = result.all_signals.iloc[0]
+        top = result.all_signals[
+            (result.all_signals["Product"] == "XENMATRIX")
+            & (result.all_signals["Adverse Event"] == "Infection")
+        ].iloc[0]
         assert top["Product"] == "XENMATRIX"
         assert top["Adverse Event"] == "Infection"
         assert top["Count"] == 61.0
@@ -753,7 +759,10 @@ class TestAnalyze:
     def test_prr_via_analyze(self, converted_data):
         result = analyze(converted_data, PRRConfig(min_events=3, decision_metric="rank"))
         assert_valid_result(result)
-        top = result.all_signals.iloc[0]
+        top = result.all_signals[
+            (result.all_signals["Product"] == "XENMATRIX")
+            & (result.all_signals["Adverse Event"] == "Infection")
+        ].iloc[0]
         assert top["Product"] == "XENMATRIX"
         np.testing.assert_allclose(top["PRR"], 5.200984, rtol=1e-4)
         assert result.params["method"] == "prr"

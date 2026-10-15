@@ -93,17 +93,23 @@ def compute_contingency(data_frame, product_label, count_label, ae_label, margin
             mat = mat.astype(data_frame[count_label].dtype, copy=False)
 
         if margin_threshold > 1:
-            r_tot = np.sum(mat, axis=1) >= margin_threshold
-            c_tot = np.sum(mat, axis=0) >= margin_threshold
-            mat = mat[np.ix_(r_tot, c_tot)]
-            p_uniques = p_uniques[r_tot]
-            ae_uniques = ae_uniques[c_tot]
-
-        r_sums = np.sum(mat, axis=1) >= margin_threshold
-        c_sums = np.sum(mat, axis=0) >= margin_threshold
-        mat = mat[np.ix_(r_sums, c_sums)]
-        p_uniques = p_uniques[r_sums]
-        ae_uniques = ae_uniques[c_sums]
+            while True:
+                r_mask = np.sum(mat, axis=1) >= margin_threshold
+                c_mask = np.sum(mat, axis=0) >= margin_threshold
+                if np.all(r_mask) and np.all(c_mask):
+                    break
+                mat = mat[np.ix_(r_mask, c_mask)]
+                p_uniques = p_uniques[r_mask]
+                ae_uniques = ae_uniques[c_mask]
+                if mat.size == 0:
+                    break
+        else:
+            r_sums = np.sum(mat, axis=1) >= 1
+            c_sums = np.sum(mat, axis=0) >= 1
+            if not (np.all(r_sums) and np.all(c_sums)):
+                mat = mat[np.ix_(r_sums, c_sums)]
+                p_uniques = p_uniques[r_sums]
+                ae_uniques = ae_uniques[c_sums]
 
         data_cont = pd.DataFrame(mat, index=p_uniques, columns=ae_uniques)
         data_cont.index.name = product_label
