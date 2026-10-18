@@ -68,6 +68,54 @@ def compute_contingency(data_frame, product_label, count_label, ae_label, margin
     Returns:
         pd.DataFrame: A contingency table with adverse events as columns and products as rows.
     """
+    if isinstance(product_label, str) and isinstance(ae_label, str) and len(data_frame) > 0:
+        p_codes, p_uniques = pd.factorize(data_frame[product_label], sort=True)
+        ae_codes, ae_uniques = pd.factorize(data_frame[ae_label], sort=True)
+        valid_mask = (p_codes >= 0) & (ae_codes >= 0)
+        if not np.all(valid_mask):
+            p_codes = p_codes[valid_mask]
+            ae_codes = ae_codes[valid_mask]
+            counts = data_frame[count_label].to_numpy(dtype=np.float64, copy=False)[valid_mask]
+        else:
+            counts = data_frame[count_label].to_numpy(dtype=np.float64, copy=False)
+
+        n_p = len(p_uniques)
+        n_a = len(ae_uniques)
+        if n_p == 0 or n_a == 0:
+            return pd.DataFrame(
+                index=pd.Index([], name=product_label),
+                columns=pd.Index([], name=ae_label),
+            )
+
+        flat_idx = p_codes * n_a + ae_codes
+        mat = np.bincount(flat_idx, weights=counts, minlength=n_p * n_a).reshape(n_p, n_a)
+        if np.issubdtype(data_frame[count_label].dtype, np.integer):
+            mat = mat.astype(data_frame[count_label].dtype, copy=False)
+
+        if margin_threshold > 1:
+            while True:
+                r_mask = np.sum(mat, axis=1) >= margin_threshold
+                c_mask = np.sum(mat, axis=0) >= margin_threshold
+                if np.all(r_mask) and np.all(c_mask):
+                    break
+                mat = mat[np.ix_(r_mask, c_mask)]
+                p_uniques = p_uniques[r_mask]
+                ae_uniques = ae_uniques[c_mask]
+                if mat.size == 0:
+                    break
+        else:
+            r_sums = np.sum(mat, axis=1) >= 1
+            c_sums = np.sum(mat, axis=0) >= 1
+            if not (np.all(r_sums) and np.all(c_sums)):
+                mat = mat[np.ix_(r_sums, c_sums)]
+                p_uniques = p_uniques[r_sums]
+                ae_uniques = ae_uniques[c_sums]
+
+        data_cont = pd.DataFrame(mat, index=p_uniques, columns=ae_uniques)
+        data_cont.index.name = product_label
+        data_cont.columns.name = ae_label
+        return data_cont
+
     if margin_threshold > 1:
         prod_totals = data_frame.groupby(product_label, observed=True)[count_label].sum()
         ae_totals = data_frame.groupby(ae_label, observed=True)[count_label].sum()
