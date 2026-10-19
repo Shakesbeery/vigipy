@@ -34,17 +34,17 @@ logger = logging.getLogger("vigipy")
 # Calibrated fallback priors: (alpha1, beta1, alpha2, beta2, pi_base)
 # Component 1 (null): mean = 0.85, rate = 3.0 -> shape = 2.55
 # Component 2 (signal): mean = 3.20, rate = 0.8 -> shape = 2.56
-_DEFAULT_PRIOR_PARAMS: tuple[float, float, float, float, float] = (2.55, 3.00, 2.56, 0.80, 0.12)
+_DEFAULT_PRIOR_PARAMS: tuple[float, float, float, float, float] = (2.55, 3.00, 2.25, 0.50, 0.12)
 
 # Grid of alternative relative risks and prior weights for the Wald-Poisson mixture martingale
-_MARTINGALE_GRID_RR = np.array([1.3, 1.6, 2.0, 2.8, 4.0, 6.0], dtype=np.float64)
-_MARTINGALE_GRID_WEIGHTS = np.array([0.20, 0.25, 0.25, 0.15, 0.10, 0.05], dtype=np.float64)
+_MARTINGALE_GRID_RR = np.array([1.3, 1.7, 2.3, 3.5, 6.0, 12.0, 25.0], dtype=np.float64)
+_MARTINGALE_GRID_WEIGHTS = np.array([0.18, 0.22, 0.22, 0.16, 0.10, 0.07, 0.05], dtype=np.float64)
 
 # Thresholds for context gating and graph regularization
 _DEGREE_REGULARIZER = 0.03
-_COHERENCE_GATE_MIN = 0.25
+_COHERENCE_GATE_MIN = 0.20
 _VELOCITY_GATE_MIN = 0.45
-_ISOLATED_LOGIT_OFFSET = -0.45
+_ISOLATED_LOGIT_OFFSET = -0.35
 _MAX_NEIGHBOR_E_CAP = 12.0
 
 
@@ -363,14 +363,14 @@ def _fit_empirical_bayes_slab_priors(
     bounds = (
         (0.60, 0.96),  # mu1: null component mean
         (2.00, 8.00),  # beta1: null component rate
-        (2.40, 6.50),  # mu2: signal component mean
-        (0.40, 1.80),  # beta2: signal component rate
-        (0.04, 0.30),  # pi_base: baseline signal weight
+        (2.80, 8.00),  # mu2: signal component mean
+        (0.15, 0.95),  # beta2: signal component rate
+        (0.05, 0.30),  # pi_base: baseline signal weight
     )
     try:
         res = minimize(
             _nll,
-            x0=np.array([0.85, 3.0, 3.2, 0.80, 0.12], dtype=np.float64),
+            x0=np.array([0.85, 3.0, 4.2, 0.50, 0.12], dtype=np.float64),
             method="L-BFGS-B",
             bounds=bounds,
             options={"maxiter": 150},
