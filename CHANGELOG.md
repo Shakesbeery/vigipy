@@ -4,9 +4,9 @@
 
 ### Added
 - **AEGIS (`aegis`, `AEGISConfig`)**: Anytime Empirical Graph-Informed Shrinkage — a unified pharmacovigilance signal detection methodology combining:
-  1. Counterfactual Leave-One-Cell-Out (LOCO) initialization, analytically bias-corrected Huber Winsorization ($\phi(\delta) - \delta\Phi(-\delta)$), and Huber-clipped SVD baseline estimation (`B_Counterfactual`, `Unmasking_Ratio`) to eliminate across-drug blockbuster competition and within-drug self-cloaking.
+  1. Counterfactual Leave-One-Cell-Out (LOCO) initialization, analytically bias-corrected margin-hijacking Huber Winsorization ($\phi(\delta) - \delta\Phi(-\delta)$), and positive low-rank SVD baseline estimation (`B_Counterfactual`, `Unmasking_Ratio`) to eliminate across-drug blockbuster competition and within-drug self-cloaking without collapsing poly-signal columns.
   2. Degree-regularized top-$K$ Normalized Pointwise Mutual Information (NPMI) syndrome graph with conjugate Poisson-Gamma neighborhood pooling $(\Delta C_{ji}, \Delta B_{ji})$ and covariate-gated 2-Gamma Empirical Bayes shrinkage (`AEGIS_EBGM`, `AEGIS_LB`, `AEGIS_UB`, `Posterior_Sig_Prob`, `Syndromic_Coherence`).
-  3. Continuous-kernel Exposure-Normalized Dual-EWMA surge velocity (`Surge_Velocity`) that separates drug-wide media notoriety waves from focal biological acceleration.
+  3. Continuous-kernel Exposure-Normalized Dual-EWMA surge velocity (`Surge_Velocity`) with automatic `fast_contingency` index/column alignment that separates drug-wide media notoriety waves from focal biological acceleration.
   4. Non-asymptotic Wald-Poisson mixture martingale $e$-values coupled with leave-one-out neighborhood $e$-values via Vovk & Wang's (2021) product martingale identity (`e_value`, `anytime_p_value`, `e_fdr`) alongside cumulative Bayesian Posterior Error Probability (`fdr`).
 - **Zero-Inflated Gamma-Poisson Shrinker (`zigps`, `ZIGPSConfig`)**: 3-component Spike-and-Slab Empirical Bayes mixture model ($\pi_0 \delta_0(\lambda) + (1-\pi_0)[P \cdot \text{Gamma}_1 + (1-P) \cdot \text{Gamma}_2]$) with profile/bounded L-BFGS-B optimization, isolating structural drug–event zeros from the continuous relative-risk slab (`Pi0_Structural`, `Slab_Weight`, `EBGM`, `LowerBound`).
 - **Sequential Change-Point Surveillance (`maxsprt`, `MaxSPRTConfig`, `cusum_da`, `CUSUMConfig`)**:
@@ -17,7 +17,7 @@
 ### Changed
 - **SCORE-DA (`score_da`) Mathematical & Calibration Hardening**:
   - Replaced raw Jaccard thresholding in `_build_syndromic_laplacian()` with scale-invariant chance-corrected Jaccard lift and top-$K$ ($K=4$) neighbor sharpening per adverse event so isolated background AEs are not shrunk by dense noise edges.
-  - Added LOCO initialization with iterative Winsorization and Huber-clipped Pearson residuals in `_estimate_low_rank_baseline()` to prevent focal signal self-absorption and multi-cell blockbuster masking.
+  - Added LOCO initialization with margin-hijacking Winsorization and positive low-rank SVD residual reconstruction in `_estimate_low_rank_baseline()` to prevent focal signal self-absorption and multi-cell blockbuster masking.
   - Added cooperative syndromic neighbor pooling into the FISTA target and debiased active-support inference (`z_score`, `fdr`).
 - **Vectorized Quantile Bisection (`quantile_funcs.py`)**: Added active unconverged index masking (`active = active[not_conv]`) so `scipy.stats.gamma.cdf` only evaluates unconverged indices during iterative root-finding.
 - **LASSO (`LASSO.py`) Pre-Allocation**: Hoisted sparse/dense feature matrix assembly (`X_fit`) and contingency cross-product (`X_mat.T @ Y_mat`) outside the per-event regression loop.
