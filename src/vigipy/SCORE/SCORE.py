@@ -294,7 +294,12 @@ def _estimate_low_rank_baseline(C_current: np.ndarray, effective_rank: int, seed
     R_w, C_w, N_w = R_row, C_col, N_tot
 
     for _ in range(4):
-        C_wins = np.minimum(C_current, E_mat + 2.5 * np.sqrt(np.maximum(E_mat, 1.0)))
+        cap = E_mat + 2.5 * np.sqrt(np.maximum(E_mat, 1.0))
+        excess = np.maximum(0.0, C_current - E_mat)
+        col_share = excess / np.maximum(C_col[None, :], 1.0)
+        row_share = excess / np.maximum(R_row[:, None], 1.0)
+        hijack_mask = (C_current > 2.0 * E_mat) & (C_current > cap) & ((col_share > 0.15) | ((row_share > 0.50) & (C_current > 5.0 * E_mat)))
+        C_wins = np.where(hijack_mask, cap, C_current)
         R_w = np.sum(C_wins, axis=1)
         C_w = np.sum(C_wins, axis=0)
         N_w = float(np.sum(R_w))
@@ -315,12 +320,12 @@ def _estimate_low_rank_baseline(C_current: np.ndarray, effective_rank: int, seed
             U, S_vals, Vt = randomized_svd(
                 R_pears_clipped, n_components=effective_rank, random_state=seed
             )
-            R_low_rank = np.clip((U * S_vals) @ Vt, -1.5, 1.5)
+            R_low_rank = np.clip((U * S_vals) @ Vt, 0.0, 1.5)
             return np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
         except Exception:
             try:
                 U, S_vals, Vt = np.linalg.svd(R_pears_clipped, full_matrices=False)
-                R_low_rank = np.clip((U[:, :effective_rank] * S_vals[:effective_rank]) @ Vt[:effective_rank, :], -1.5, 1.5)
+                R_low_rank = np.clip((U[:, :effective_rank] * S_vals[:effective_rank]) @ Vt[:effective_rank, :], 0.0, 1.5)
                 return np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
             except Exception:
                 return np.maximum(1e-4, E_mat)

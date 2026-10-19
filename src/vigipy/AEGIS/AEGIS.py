@@ -122,7 +122,10 @@ def _extract_aegis_matrices(
 
         C_fast = getattr(container, "fast_contingency", None)
         if C_fast is not None and isinstance(C_fast, pd.DataFrame):
-            C_fast = np.ascontiguousarray(C_fast.values, dtype=np.float64)
+            C_fast = np.ascontiguousarray(
+                C_fast.reindex(index=products, columns=events, fill_value=0.0).values,
+                dtype=np.float64,
+            )
     else:
         raise ValueError(f"Unsupported container type '{container.type}' for AEGIS.")
 
@@ -165,7 +168,11 @@ def _sinkhorn_huber_baseline(
     for _ in range(max(1, sinkhorn_iters)):
         std_b = np.sqrt(B + 1.0)
         cap = B + huber_delta * std_b
-        C_winsor = np.minimum(C, cap) + bias_corr * std_b
+        excess = np.maximum(0.0, C - B)
+        col_share = excess / np.maximum(c_naive[None, :], 1.0)
+        row_share = excess / np.maximum(r_naive[:, None], 1.0)
+        hijack_mask = (C > 2.0 * B) & (C > cap) & ((col_share > 0.15) | ((row_share > 0.50) & (C > 5.0 * B)))
+        C_winsor = np.where(hijack_mask, cap + bias_corr * std_b, C)
         r_cf = np.sum(C_winsor, axis=1)
         c_cf = np.sum(C_winsor, axis=0)
         n_cf = float(np.sum(r_cf))
@@ -173,7 +180,7 @@ def _sinkhorn_huber_baseline(
             break
         B = np.maximum(np.outer(r_cf, c_cf) / n_cf, 1e-6)
 
-    # Optional low-rank SVD absorption of diffuse drug-class/indication structure
+    # Optional low-rank SVD absorption of positive diffuse drug-class/indication structure
     n_drugs, n_events = C.shape
     eff_rank = min(int(latent_rank), max(0, min(n_drugs, n_events) - 1))
     if eff_rank > 0:
@@ -185,12 +192,12 @@ def _sinkhorn_huber_baseline(
             from sklearn.utils.extmath import randomized_svd
 
             U, s_vals, Vt = randomized_svd(R_win, n_components=eff_rank, random_state=seed)
-            R_lr = (U * s_vals) @ Vt
+            R_lr = np.maximum(0.0, (U * s_vals) @ Vt)
             B = np.maximum(1e-4, B + R_lr * std_mat)
         except Exception as exc:
             logger.debug("randomized_svd fallback in _sinkhorn_huber_baseline: %s", exc)
             U, s_vals, Vt = np.linalg.svd(R_win, full_matrices=False)
-            R_lr = (U[:, :eff_rank] * s_vals[:eff_rank]) @ Vt[:eff_rank, :]
+            R_lr = np.maximum(0.0, (U[:, :eff_rank] * s_vals[:eff_rank]) @ Vt[:eff_rank, :])
             B = np.maximum(1e-4, B + R_lr * std_mat)
 
     return np.maximum(B, 1e-5), E_naive
