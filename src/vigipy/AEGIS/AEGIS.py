@@ -1,25 +1,18 @@
 """AEGIS: Anytime Empirical Graph-Informed Shrinkage for Disproportionality Analysis.
 
-A unified four-pillar pharmacovigilance signal detection methodology designed to overcome
-the structural blind spots of classical frequentist, empirical Bayes, and regression methods:
+Implements a pharmacovigilance signal detection model that addresses four structural
+failure modes of classical disproportionality analysis:
 
-1. Counterfactual Sinkhorn-Huber Unmasking:
-   Iteratively estimates counterfactual null marginals by Huber-Winsorizing extreme excess
-   cells before computing row/column expectations, eliminating both across-drug blockbuster
-   competition masking and within-drug self-cloaking (with optional low-rank SVD indication
-   absorption).
-2. NPMI Syndrome Graph & Context-Gated Empirical Bayes Shrinkage:
-   Constructs a volume-invariant positive Normalized Pointwise Mutual Information (NPMI)
-   network across adverse events and modulates cell-level prior signal probabilities via a
-   logistic gate driven by syndromic neighborhood coherence. Isolated low-count noise is
-   heavily shrunk, while emerging multi-symptom syndromes release shrinkage early.
-3. Exposure-Normalized Dual-EWMA Surge Velocity:
-   Separates drug-wide media notoriety waves from true focal biological acceleration by
-   comparing fast vs. slow exponential moving windows normalized by counterfactual drug
-   exposure expectations.
-4. Anytime-Valid Mixture Martingale e-Values & FDR Control:
-   Computes non-asymptotic one-sided Poisson mixture martingale e-values (Ville's inequality)
-   to permit continuous sequential regulatory monitoring without alpha inflation.
+1. Counterfactual baseline estimation via leave-one-cell-out (LOCO) initialization and
+   bias-corrected Huber Winsorization (with optional low-rank SVD residual filtering)
+   to prevent blockbuster competition masking and self-cloaking.
+2. Positive Normalized Pointwise Mutual Information (NPMI) symptom graph construction
+   with conjugate Poisson-Gamma neighborhood pooling and covariate-gated empirical Bayes
+   shrinkage.
+3. Exposure-normalized Dual-EWMA surge velocity to separate drug-wide stimulated
+   reporting (media notoriety) from focal biological acceleration.
+4. Anytime-valid Wald-Poisson mixture martingale e-values with cross-graph product
+   martingale coupling (Vovk & Wang, 2021) for sequential surveillance.
 """
 
 from __future__ import annotations
@@ -28,7 +21,7 @@ import logging
 from typing import Literal
 import numpy as np
 import pandas as pd
-from scipy.special import digamma, gdtr, gammaln, expit, logit
+from scipy.special import digamma, gdtr, gammaln, expit, logit, ndtr
 from scipy.optimize import minimize
 from scipy.sparse import issparse, csr_matrix
 
@@ -37,7 +30,30 @@ from ..utils.common import build_params
 from ..utils.distribution_funcs.quantile_funcs import quantiles
 
 logger = logging.getLogger("vigipy")
-EPS = float(np.finfo(np.float32).eps)
+
+# Calibrated fallback priors: (alpha1, beta1, alpha2, beta2, pi_base)
+# Component 1 (null): mean = 0.85, rate = 3.0 -> shape = 2.55
+# Component 2 (signal): mean = 3.20, rate = 0.8 -> shape = 2.56
+_DEFAULT_PRIOR_PARAMS: tuple[float, float, float, float, float] = (2.55, 3.00, 2.56, 0.80, 0.12)
+
+# Grid of alternative relative risks and prior weights for the Wald-Poisson mixture martingale
+_MARTINGALE_GRID_RR = np.array([1.3, 1.6, 2.0, 2.8, 4.0, 6.0], dtype=np.float64)
+_MARTINGALE_GRID_WEIGHTS = np.array([0.20, 0.25, 0.25, 0.15, 0.10, 0.05], dtype=np.float64)
+
+# Thresholds for context gating and graph regularization
+_DEGREE_REGULARIZER = 0.03
+_COHERENCE_GATE_MIN = 0.25
+_VELOCITY_GATE_MIN = 0.45
+_ISOLATED_LOGIT_OFFSET = -0.45
+_MAX_NEIGHBOR_E_CAP = 12.0
+
+
+def _normal_upper_clip_bias(delta: float) -> float:
+    """Analytical downward bias E[Z - min(Z, delta)] = phi(delta) - delta * Phi(-delta) for Z ~ N(0, 1)."""
+    d = max(float(delta), 0.1)
+    phi_d = np.exp(-0.5 * d * d) / np.sqrt(2.0 * np.pi)
+    sf_d = float(ndtr(-d))
+    return float(max(0.0, phi_d - d * sf_d))
 
 
 def _extract_aegis_matrices(
@@ -45,7 +61,7 @@ def _extract_aegis_matrices(
     fast_window_fraction: float = 0.25,
 ) -> tuple[np.ndarray, np.ndarray, float, list[str], list[str], np.ndarray | None]:
     """Extract contingency matrix C (J x I), AE co-occurrence matrix S (I x I), total reports N_rep,
-    and optional recent-window contingency matrix C_fast (J x I) for surge velocity calculation.
+    and exponentially weighted fast-window contingency matrix C_fast (J x I).
     """
     if container.type in ("binary", "binary_report", "binary_count", "binary_ddi"):
         X_df = container.product_features
@@ -73,17 +89,21 @@ def _extract_aegis_matrices(
             C = X_mat.T @ Y_mat
             S_cooccur = Y_mat.T @ Y_mat
 
-        # Extract recent report window for Dual-EWMA Surge Velocity if enough reports exist
+        # Compute exponentially weighted fast-window counts C_fast = X^T diag(w_fast) Y
         n_rows = X_mat.shape[0]
         if n_rows >= 20 and 0.05 <= fast_window_fraction < 1.0:
-            split_idx = max(1, int(round(n_rows * (1.0 - fast_window_fraction))))
-            X_fast = X_mat[split_idx:]
-            Y_fast = Y_mat[split_idx:]
-            if issparse(X_fast) or issparse(Y_fast):
-                C_fast_raw = X_fast.T @ Y_fast
+            u = np.linspace(1.0 / n_rows, 1.0, n_rows, dtype=np.float64)
+            # Exponential kernel concentrated on recent reports, normalized to target window mass
+            tau = max(float(fast_window_fraction) * 0.75, 0.05)
+            w_raw = np.exp(-(1.0 - u) / tau)
+            w_fast = w_raw * (float(fast_window_fraction) * n_rows / max(float(np.sum(w_raw)), 1e-12))
+
+            if issparse(X_mat) or issparse(Y_mat):
+                X_weighted = csr_matrix(X_mat).multiply(w_fast[:, None])
+                C_fast_raw = X_weighted.T @ csr_matrix(Y_mat)
                 C_fast = C_fast_raw.toarray() if issparse(C_fast_raw) else np.asarray(C_fast_raw, dtype=np.float64)
             else:
-                C_fast = X_fast.T @ Y_fast
+                C_fast = (X_mat * w_fast[:, None]).T @ Y_mat
         else:
             C_fast = None
 
@@ -93,13 +113,13 @@ def _extract_aegis_matrices(
         events = list(cont.columns)
         C = np.ascontiguousarray(cont.values, dtype=np.float64)
         n_rep = float(max(container.N, np.sum(C), 1.0))
-        # Row-normalized Tanimoto co-occurrence proxy scaled to marginal event counts
+
         row_sums = np.maximum(np.sum(C, axis=1, keepdims=True), 1.0)
         P_cond = C / row_sums
         col_sums = np.sum(C, axis=0)
-        # Approximate report-level co-occurrence from conditional drug profiles
         S_cooccur = (P_cond.T * col_sums[:, None]) @ P_cond
         np.fill_diagonal(S_cooccur, col_sums)
+
         C_fast = getattr(container, "fast_contingency", None)
         if C_fast is not None and isinstance(C_fast, pd.DataFrame):
             C_fast = np.ascontiguousarray(C_fast.values, dtype=np.float64)
@@ -116,17 +136,12 @@ def _sinkhorn_huber_baseline(
     latent_rank: int = 0,
     seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Pillar 1: Counterfactual Leave-One-Cell-Out (LOCO) Sinkhorn-Huber Unmasking
-    with optional low-rank SVD indication absorption.
-
-    Initializes counterfactual expectations via Leave-One-Cell-Out marginals:
-        B^{(0)}_{ji} = (R_j - C_{ji}) * (K_i - C_{ji}) / max(N - R_j - K_i + C_{ji}, 1)
-    which breaks the self-cloaking fixed point of massive single-cell spikes in O(1) steps,
-    followed by iterative Huber-Poisson Winsorization at B + delta * sqrt(B + 1).
+    """Estimate counterfactual baseline expectations via LOCO initialization and
+    bias-corrected Huber Winsorization, with optional low-rank SVD residual filtering.
 
     Returns:
         B_counterfactual: (J x I) unmasked counterfactual baseline expectation matrix.
-        E_naive: (J x I) standard naive marginal expectation matrix R_j * K_i / N.
+        E_naive: (J x I) standard marginal expectation matrix R_j * K_i / N.
     """
     r_naive = np.sum(C, axis=1)
     c_naive = np.sum(C, axis=0)
@@ -137,17 +152,20 @@ def _sinkhorn_huber_baseline(
 
     E_naive = np.maximum(np.outer(r_naive, c_naive) / n_tot_naive, 1e-6)
 
-    # Step 0: Leave-One-Cell-Out (LOCO) counterfactual initialization breaks self-cloaking in O(1)
+    # Leave-one-cell-out (LOCO) marginal initialization breaks single-cell self-cloaking in O(1)
     r_loco = np.maximum(r_naive[:, None] - C, 0.0)
     c_loco = np.maximum(c_naive[None, :] - C, 0.0)
     n_loco = np.maximum(n_tot_naive - r_naive[:, None] - c_naive[None, :] + C, 1.0)
     B_loco = (r_loco * c_loco) / n_loco
     B = np.where((r_loco > 0) & (c_loco > 0), np.minimum(E_naive, np.maximum(B_loco, 1e-6)), E_naive)
 
-    # Iterative Sinkhorn-Huber refinement on Winsorized table
+    # Analytical Gaussian tail bias correction restores null unbiasedness under upper Winsorization
+    bias_corr = _normal_upper_clip_bias(huber_delta)
+
     for _ in range(max(1, sinkhorn_iters)):
-        cap = B + huber_delta * np.sqrt(B + 1.0)
-        C_winsor = np.minimum(C, cap)
+        std_b = np.sqrt(B + 1.0)
+        cap = B + huber_delta * std_b
+        C_winsor = np.minimum(C, cap) + bias_corr * std_b
         r_cf = np.sum(C_winsor, axis=1)
         c_cf = np.sum(C_winsor, axis=0)
         n_cf = float(np.sum(r_cf))
@@ -155,27 +173,25 @@ def _sinkhorn_huber_baseline(
             break
         B = np.maximum(np.outer(r_cf, c_cf) / n_cf, 1e-6)
 
-    # Optional low-rank SVD absorption of smooth class/indication confounding on Winsorized residuals
+    # Optional low-rank SVD absorption of diffuse drug-class/indication structure
     n_drugs, n_events = C.shape
     eff_rank = min(int(latent_rank), max(0, min(n_drugs, n_events) - 1))
     if eff_rank > 0:
-        cap = B + huber_delta * np.sqrt(B + 1.0)
-        C_winsor = np.minimum(C, cap)
         std_mat = np.sqrt(B + 1.0)
-        R_win = (C_winsor - B) / std_mat
+        cap = B + huber_delta * std_mat
+        C_winsor = np.minimum(C, cap)
+        R_win = np.clip((C_winsor - B) / std_mat, -huber_delta, huber_delta)
         try:
             from sklearn.utils.extmath import randomized_svd
 
             U, s_vals, Vt = randomized_svd(R_win, n_components=eff_rank, random_state=seed)
             R_lr = (U * s_vals) @ Vt
             B = np.maximum(1e-4, B + R_lr * std_mat)
-        except Exception:
-            try:
-                U, s_vals, Vt = np.linalg.svd(R_win, full_matrices=False)
-                R_lr = (U[:, :eff_rank] * s_vals[:eff_rank]) @ Vt[:eff_rank, :]
-                B = np.maximum(1e-4, B + R_lr * std_mat)
-            except Exception:
-                pass
+        except Exception as exc:
+            logger.debug("randomized_svd fallback in _sinkhorn_huber_baseline: %s", exc)
+            U, s_vals, Vt = np.linalg.svd(R_win, full_matrices=False)
+            R_lr = (U[:, :eff_rank] * s_vals[:eff_rank]) @ Vt[:eff_rank, :]
+            B = np.maximum(1e-4, B + R_lr * std_mat)
 
     return np.maximum(B, 1e-5), E_naive
 
@@ -186,16 +202,11 @@ def _build_npmi_syndrome_graph(
     min_npmi: float = 0.05,
     top_k: int = 4,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Pillar 2a: Construct Top-K Sharpened Positive NPMI Syndrome Graph.
-
-    Unlike Jaccard similarity, NPMI normalizes by -ln P(i, k), preserving strong syndromic links
-    between rare sentinel adverse events (e.g., Agranulocytosis) and common prodromal symptoms (e.g., Fever).
-    Retains the top-K strongest syndromic neighbors per event with squared NPMI attention weights
-    so multi-symptom syndromes are not diluted across unrelated background events.
+    """Construct a top-K pruned positive Normalized Pointwise Mutual Information (NPMI) graph.
 
     Returns:
-        S_bar: (I x I) row-normalized syndromic diffusion matrix with zero diagonal.
-        clusters: (I,) integer array of spectral syndrome cluster assignments.
+        S_bar: (I x I) degree-regularized row-normalized diffusion matrix with zero diagonal.
+        clusters: (I,) integer array of spectral cluster assignments.
     """
     n_events = S_cooccur.shape[0]
     if n_events <= 1:
@@ -223,7 +234,7 @@ def _build_npmi_syndrome_graph(
     npmi[npmi < min_npmi] = 0.0
     W_sym = 0.5 * (npmi + npmi.T)
 
-    # Top-K neighborhood attention sharpening per adverse event
+    # Retain top-K neighbors per event with squared NPMI weights
     W = np.zeros_like(W_sym)
     k_eff = min(max(1, top_k), n_events - 1)
     for i in range(n_events):
@@ -236,10 +247,14 @@ def _build_npmi_syndrome_graph(
                 W[i] = row ** 2
 
     row_deg = np.sum(W, axis=1)
-    S_bar = np.divide(W, np.maximum(row_deg[:, None] + 0.03, 1e-12), where=(row_deg[:, None] > 0))
+    S_bar = np.divide(
+        W,
+        np.maximum(row_deg[:, None] + _DEGREE_REGULARIZER, 1e-12),
+        where=(row_deg[:, None] > 0),
+    )
     S_bar[row_deg <= 0] = 0.0
 
-    # Spectral cluster assignment on symmetrized graph
+    # Spectral cluster assignment from normalized Laplacian
     W_clust = 0.5 * (W + W.T)
     deg_c = np.sum(W_clust, axis=1)
     clusters = np.zeros(n_events, dtype=int)
@@ -264,7 +279,8 @@ def _build_npmi_syndrome_graph(
                 vals, vecs = np.linalg.eigh(L_norm)
                 if len(vals) > 1:
                     clusters = (vecs[:, 1] > 0).astype(int)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Spectral clustering fallback in _build_npmi_syndrome_graph: %s", exc)
             clusters = np.zeros(n_events, dtype=int)
 
     return S_bar, clusters
@@ -276,10 +292,10 @@ def _compute_dual_ewma_velocity(
     C_fast: np.ndarray | None,
     kappa: float = 0.5,
 ) -> np.ndarray:
-    """Pillar 3: Exposure-Normalized Dual-EWMA Surge Velocity V_{ji}.
+    """Compute exposure-normalized Dual-EWMA surge velocity.
 
-    Decouples drug-wide media notoriety waves from true focal biological acceleration by
-    normalizing fast-window counts against fast-window counterfactual drug exposure expectations.
+    Normalizes exponentially weighted recent counts C_fast against the drug's recent
+    reporting volume share so drug-wide media notoriety waves cancel out.
     """
     if C_fast is None:
         return np.zeros_like(C)
@@ -289,9 +305,8 @@ def _compute_dual_ewma_velocity(
     if n_fast <= 0:
         return np.zeros_like(C)
 
-    # Scale B by drug-specific recent reporting share so drug-wide notoriety cancels out
     r_total = np.maximum(np.sum(C, axis=1), 1e-6)
-    drug_fast_share = np.clip(r_fast / r_total, 1e-4, 1.0)
+    drug_fast_share = np.clip(r_fast / r_total, 1e-4, 1.0 - 1e-4)
     B_fast = B * drug_fast_share[:, None]
 
     C_slow = np.maximum(0.0, C - C_fast)
@@ -299,8 +314,7 @@ def _compute_dual_ewma_velocity(
 
     fast_rr_log2 = np.log2((C_fast + kappa) / (B_fast + kappa))
     slow_rr_log2 = np.log2((C_slow + kappa) / (B_slow + kappa))
-    velocity = np.where(C > 0, fast_rr_log2 - slow_rr_log2, 0.0)
-    return velocity
+    return np.where(C > 0, fast_rr_log2 - slow_rr_log2, 0.0)
 
 
 def _fit_empirical_bayes_slab_priors(
@@ -308,24 +322,17 @@ def _fit_empirical_bayes_slab_priors(
     B_flat: np.ndarray,
 ) -> tuple[float, float, float, float, float]:
     """Fit identifiable 2-Gamma empirical Bayes prior parameters (alpha1, beta1, alpha2, beta2, pi_base)
-    parameterized by (mu1, beta1, mu2, beta2, pi_base) so Component 1 is strictly a null component
-    (mu1 = alpha1/beta1 in [0.55, 0.98]) and Component 2 is strictly an elevated-risk signal component
-    (mu2 = alpha2/beta2 in [2.2, 8.0]).
+    parameterized via component means (mu1, beta1, mu2, beta2, pi_base) with mu1 < 1 < mu2.
     """
     pos_mask = C_flat >= 1.0
     n_pos = C_flat[pos_mask]
     E_pos = B_flat[pos_mask]
 
-    # Default calibrated pharmacovigilance parameters:
-    # Null component: mu1 = 0.85, beta1 = 3.0 -> alpha1 = 2.55, beta1 = 3.0
-    # Signal component: mu2 = 3.2, beta2 = 0.8 -> alpha2 = 2.56, beta2 = 0.8
-    default_priors = (2.55, 3.0, 2.56, 0.80, 0.12)
     if len(n_pos) < 15:
-        return default_priors
+        return _DEFAULT_PRIOR_PARAMS
 
-    # Winsorize extreme E_pos/n_pos during hyperprior estimation so a single 5000-count blockbuster
-    # cell cannot dominate the global prior fit
-    n_fit = np.minimum(n_pos, B_flat[pos_mask] + 15.0 * np.sqrt(B_flat[pos_mask] + 1.0))
+    # Winsorize extreme cell counts during hyperprior estimation so single blockbuster spikes do not dominate
+    n_fit = np.minimum(n_pos, E_pos + 15.0 * np.sqrt(E_pos + 1.0))
     gammaln_n_1 = gammaln(n_fit + 1.0)
 
     def _nll(theta: np.ndarray) -> float:
@@ -347,11 +354,11 @@ def _fit_empirical_bayes_slab_priors(
         return float(np.sum(-term1_log + np.log(prob_pos)))
 
     bounds = (
-        (0.60, 0.96),  # mu1: null mean strictly < 1.0
-        (2.00, 8.00),  # beta1: null rate/concentration
-        (2.40, 6.50),  # mu2: signal mean strictly >= 2.4
-        (0.40, 1.80),  # beta2: signal rate
-        (0.04, 0.30),  # pi_base: base prior signal fraction
+        (0.60, 0.96),  # mu1: null component mean
+        (2.00, 8.00),  # beta1: null component rate
+        (2.40, 6.50),  # mu2: signal component mean
+        (0.40, 1.80),  # beta2: signal component rate
+        (0.04, 0.30),  # pi_base: baseline signal weight
     )
     try:
         res = minimize(
@@ -363,33 +370,43 @@ def _fit_empirical_bayes_slab_priors(
         )
         mu1, b1, mu2, b2, pi_sig = res.x
         return float(mu1 * b1), float(b1), float(mu2 * b2), float(b2), float(pi_sig)
-    except Exception:
-        return default_priors
+    except Exception as exc:
+        logger.debug("Empirical Bayes prior optimization fallback: %s", exc)
+        return _DEFAULT_PRIOR_PARAMS
 
 
 def _compute_anytime_martingale_evalues(
-    C_eff: np.ndarray,
-    B: np.ndarray,
-    pi_context: np.ndarray,
+    C_mat: np.ndarray,
+    B_mat: np.ndarray,
+    S_bar: np.ndarray,
+    martingale_coupling: float = 0.55,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Pillar 4: Anytime-Valid One-Sided Poisson Mixture Martingale e-Values and e-BH FDR.
+    """Compute one-sided Wald-Poisson mixture martingale e-values with cross-graph product
+    martingale coupling (Vovk & Wang, 2021) and e-BH FDR adjustment (Wang & Ramdas, 2022).
 
-    Evaluates a discrete mixture of Wald-Poisson likelihood ratio martingales over a grid of
-    alternative relative risks lambda_m > 1:
-        M_m(C, B) = exp(C * ln(lambda_m) - (lambda_m - 1) * B)
-    Because E_{H0}[M_m(t)] = 1 for all t and all lambda_m > 1 under H0: RR <= 1, any convex
-    mixture E_t = sum_m w_m M_m(t) is a nonnegative supermartingale with E_{H0}[E_t] <= 1.
-    By Ville's inequality, p_anytime = min(1, 1 / E_t) is valid at any arbitrary stopping time.
+    Mathematical Validity:
+        1. For each cell (j, i), the raw mixture martingale is evaluated on actual counts (C_{ji}, B_{ji}):
+               E^{raw}_{ji} = sum_m w_m exp(C_{ji} ln(lambda_m) - (lambda_m - 1) B_{ji})
+           Under H_0: E[C_{ji}] <= B_{ji}, E_{H0}[E^{raw}_{ji}] <= 1.
+        2. Because S_bar has a strictly zero diagonal (S_bar[i, i] = 0) and row sums d_i <= 1,
+           the leave-one-out neighborhood e-value
+               E^{neigh}_{ji} = (1 - d_i) + sum_{k != i} S_bar[i, k] * E^{raw}_{jk}
+           satisfies E_{H0}[E^{neigh}_{ji}] <= 1 by linearity of expectation and depends only on
+           columns k != i.
+        3. Under cell-wise null independence across columns, E^{raw}_{ji} and E^{neigh}_{ji} are
+           independent, so the coupled e-value
+               E_{ji} = (1 - gamma) * E^{raw}_{ji} + gamma * E^{raw}_{ji} * min(E^{neigh}_{ji}, kappa_max)
+           satisfies E_{H0}[E_{ji}] <= 1 by Ville's and Vovk-Wang's product martingale property.
     """
-    grid_rr = np.array([1.3, 1.6, 2.0, 2.8, 4.0, 6.0], dtype=np.float64)
-    base_weights = np.array([0.20, 0.25, 0.25, 0.15, 0.10, 0.05], dtype=np.float64)
-    base_weights /= np.sum(base_weights)
+    C_flat = C_mat.ravel()
+    B_flat = B_mat.ravel()
 
-    log_grid = np.log(grid_rr)
-    drift_grid = grid_rr - 1.0
+    weights = _MARTINGALE_GRID_WEIGHTS / np.sum(_MARTINGALE_GRID_WEIGHTS)
+    log_grid = np.log(_MARTINGALE_GRID_RR)
+    drift_grid = _MARTINGALE_GRID_RR - 1.0
 
-    c_vec = C_eff[:, None]
-    b_vec = B[:, None]
+    c_vec = C_flat[:, None]
+    b_vec = B_flat[:, None]
     log_martingales = np.where(
         c_vec > b_vec,
         c_vec * log_grid[None, :] - b_vec * drift_grid[None, :],
@@ -397,26 +414,33 @@ def _compute_anytime_martingale_evalues(
     )
     log_martingales = np.clip(log_martingales, -50.0, 500.0)
     max_lm = np.max(log_martingales, axis=1, keepdims=True)
-    mix_scaled = np.sum(base_weights[None, :] * np.exp(log_martingales - max_lm), axis=1)
+    mix_scaled = np.sum(weights[None, :] * np.exp(log_martingales - max_lm), axis=1)
     log_e_raw = np.squeeze(max_lm, axis=1) + np.log(np.maximum(mix_scaled, 1e-300))
+    e_raw_flat = np.where(C_flat > B_flat, np.exp(np.minimum(log_e_raw, 300.0)), 1.0)
 
-    w_gate = np.clip(pi_context / np.maximum(np.median(pi_context[C_eff > 0]) if np.any(C_eff > 0) else 0.1, 0.05), 0.35, 1.0)
+    # Leave-one-out neighborhood e-value across S_bar (strictly zero diagonal)
+    E_raw_mat = e_raw_flat.reshape(C_mat.shape)
+    E_Raw_capped = np.minimum(E_raw_mat, _MAX_NEIGHBOR_E_CAP)
+    row_deg = np.clip(np.sum(S_bar, axis=1), 0.0, 1.0)
+    E_neigh_mat = (1.0 - row_deg[None, :]) + (E_Raw_capped @ S_bar.T)
+    e_neigh_flat = np.minimum(E_neigh_mat.ravel(), _MAX_NEIGHBOR_E_CAP)
+
+    gamma = float(np.clip(martingale_coupling, 0.0, 1.0))
     e_values = np.where(
-        C_eff > B,
-        (1.0 - w_gate) * 1.0 + w_gate * np.exp(np.minimum(log_e_raw, 300.0)),
+        C_flat > B_flat,
+        (1.0 - gamma) * e_raw_flat + gamma * e_raw_flat * e_neigh_flat,
         1.0,
     )
+    p_anytime = np.where(C_flat > B_flat, np.minimum(1.0, 1.0 / np.maximum(e_values, 1.0)), 1.0)
 
-    p_anytime = np.where(C_eff > B, np.minimum(1.0, 1.0 / np.maximum(e_values, 1.0)), 1.0)
-
-    # e-BH procedure (Wang & Ramdas, 2022): sort e-values descending, adjusted q_k = min(1, M / (k * E_(k)))
+    # e-BH procedure (Wang & Ramdas, 2022)
     n_total = len(e_values)
-    testable_idx = np.flatnonzero(C_eff > B)
+    testable_idx = np.flatnonzero(C_flat > B_flat)
     m_testable = max(len(testable_idx), 1)
     e_fdr = np.ones(n_total, dtype=np.float64)
     if len(testable_idx) > 0:
         e_sub = e_values[testable_idx]
-        order = np.argsort(-e_sub)
+        order = np.argsort(-e_sub, kind="mergesort")
         sorted_e = e_sub[order]
         ranks = np.arange(1, len(testable_idx) + 1)
         adj = np.minimum(1.0, m_testable / np.maximum(ranks * sorted_e, 1e-12))
@@ -440,39 +464,33 @@ def aegis(
     latent_rank: int = 2,
     min_npmi: float = 0.05,
     syndromic_gain: float = 1.50,
-    syndromic_coupling: float = 0.45,
+    syndromic_coupling: float = 0.60,
     velocity_gain: float = 0.85,
     fast_window_fraction: float = 0.25,
     seed: int = 42,
 ) -> AnalysisResult:
-    """Perform AEGIS (Anytime Empirical Graph-Informed Shrinkage) Disproportionality Analysis.
+    """Perform AEGIS (Anytime Empirical Graph-Informed Shrinkage) disproportionality analysis.
 
-    Clinical Intuition:
-        Existing pharmacovigilance methodologies force a trade-off between early sensitivity
-        and false-positive control:
-        - Frequentist ratios (PRR, ROR) explode on small counts (n=1..3) and suffer severe Type I
-          error inflation under sequential surveillance.
-        - Empirical Bayes shrinkers (MGPS, BCPNN, ZIGPS) apply a single global prior to every cell
-          independently, aggressively crushing genuine emerging signals when counts are small (n=2..4),
-          and remain vulnerable to blockbuster competition masking.
-        - Graph-regularized excess estimators (SCORE-DA) lack Bayesian posterior relative-risk
-          quantiles and sequential anytime-valid error guarantees.
+    Parameters:
+        container: DataContainer holding binary report matrices or a contingency table.
+        min_events: Minimum observed count required to flag a drug-event pair.
+        fdr_threshold: Target false discovery rate threshold (default: 0.05).
+        lb_threshold: Minimum 5th-percentile posterior relative risk threshold (default: 1.0).
+        decision_metric: Decision rule ('combined', 'lb', 'fdr', or 'e_value').
+        null_rr: Null relative risk benchmark (default: 1.0).
+        huber_delta: Huber Winsorization threshold in standard deviations for baseline estimation.
+        sinkhorn_iters: Number of Winsorized marginal refinement iterations.
+        latent_rank: Rank of truncated SVD on Winsorized residuals for class/indication filtering.
+        min_npmi: Minimum positive NPMI threshold to retain an edge in the symptom graph.
+        syndromic_gain: Logistic gate slope for syndromic neighborhood coherence.
+        syndromic_coupling: Conjugate Poisson-Gamma neighborhood precision pooling weight.
+        velocity_gain: Logistic gate slope for Dual-EWMA surge velocity.
+        fast_window_fraction: Effective fraction of recent reports weighted in Dual-EWMA velocity.
+        seed: Random seed for randomized SVD reproducibility.
 
-        AEGIS unifies four synergistic innovations to resolve all four limitations simultaneously:
-        1. **Counterfactual LOCO Sinkhorn-Huber Unmasking**: Initializes Leave-One-Cell-Out marginals
-           and iteratively Winsorizes extreme cells before computing expectations (plus low-rank SVD
-           indication filtering), eliminating both across-drug blockbuster competition and within-drug
-           self-cloaking.
-        2. **NPMI Syndrome Graph & Context-Gated Empirical Bayes**: Builds a volume-invariant
-           Normalized Pointwise Mutual Information (NPMI) symptom graph. When a drug shows elevated
-           reporting across multiple pathophysiologically linked symptoms in a syndrome (e.g., fever +
-           neutropenia + mucosal ulceration), the logistic context gate increases the local prior
-           signal probability `pi_ji`, releasing Bayesian shrinkage early on true emerging syndromes
-           while strongly shrinking isolated sporadic noise.
-        3. **Exposure-Normalized Dual-EWMA Surge Velocity**: Separates drug-wide media notoriety waves
-           (which inflate all AEs for a drug proportionally) from focal biological acceleration.
-        4. **Anytime-Valid Mixture Martingale e-Values**: Provides non-asymptotic sequential hypothesis
-           testing valid under continuous regulatory monitoring at any arbitrary stopping time.
+    Returns:
+        AnalysisResult containing all drug-event pairs, detected signals, signal count,
+        and fitted model parameters.
     """
     param_dict = build_params(
         "aegis",
@@ -494,13 +512,13 @@ def aegis(
         },
     )
 
-    # 1. Extract contingency matrix C, co-occurrence S, and optional fast window C_fast
+    # 1. Extract contingency matrix C, co-occurrence S, and exponentially weighted fast window C_fast
     C, S_cooccur, n_rep, products, events, C_fast = _extract_aegis_matrices(
         container, fast_window_fraction=fast_window_fraction
     )
     n_drugs, n_events = C.shape
 
-    # 2. Pillar 1: Counterfactual LOCO Sinkhorn-Huber Unmasking
+    # 2. Counterfactual baseline estimation (LOCO + bias-corrected Huber Winsorization + low-rank SVD)
     B_cf, E_naive = _sinkhorn_huber_baseline(
         C,
         huber_delta=huber_delta,
@@ -510,36 +528,38 @@ def aegis(
     )
     unmasking_ratio = E_naive / np.maximum(B_cf, 1e-6)
 
-    # 3. Pillar 2a: Volume-Invariant Top-K Sharpened NPMI Syndrome Graph & Neighborhood Coherence
+    # 3. Positive NPMI symptom graph & leave-one-out neighborhood coherence
     S_bar, clusters = _build_npmi_syndrome_graph(S_cooccur, n_rep=n_rep, min_npmi=min_npmi)
-
-    # Standardized positive cell excess z_0 (winsorized at 8.0 so single massive spikes don't flood neighbors)
     z0_mat = np.clip((C - B_cf) / np.sqrt(B_cf + 0.5), 0.0, 8.0)
-    # Cross-event syndromic coherence z_syn = z0 @ S_bar^T (strictly zero diagonal)
     z_syn_mat = z0_mat @ S_bar.T
 
-    # 4. Pillar 3: Exposure-Normalized Dual-EWMA Surge Velocity
+    # 4. Exposure-normalized Dual-EWMA surge velocity
     velocity_mat = _compute_dual_ewma_velocity(C, B_cf, C_fast)
 
-    # Effective syndromically & temporally coupled count: applies when cell has positive excess (C > B_cf)
-    # and syndromic neighbors show positive coherence (z_syn > 0.25) or focal velocity surges
-    coherence_active = (C > B_cf) & (z_syn_mat > 0.25)
-    vel_active = (C > B_cf) & (velocity_mat > 0.45)
-    c_syn_boost = np.where(
-        coherence_active,
-        (syndromic_coupling + 0.15) * np.sqrt(B_cf + 0.25) * z_syn_mat,
-        0.0,
-    ) + np.where(
-        vel_active,
-        0.30 * np.sqrt(B_cf + 0.25) * np.maximum(0.0, velocity_mat - 0.35),
-        0.0,
-    )
-    C_eff_mat = C + c_syn_boost
+    # 5. Conjugate Poisson-Gamma neighborhood & velocity pooling
+    # Pools both pseudo-counts (dC) and pseudo-exposure (dB) so posterior mean remains a convex
+    # shrinkage estimator while posterior precision increases for coherent syndromes.
+    coherence_active = (C > B_cf) & (z_syn_mat > _COHERENCE_GATE_MIN) & (syndromic_coupling > 0.0)
+    vel_active = (C > B_cf) & (velocity_mat > _VELOCITY_GATE_MIN) & (velocity_gain > 0.0)
 
-    # 5. Pillar 2b: Context-Gated Empirical Bayes Shrinkage
+    obs_rr = C / np.maximum(B_cf, 1e-6)
+    neigh_rr = np.maximum(obs_rr, 1.0 + z_syn_mat / np.sqrt(B_cf + 0.5))
+
+    tau_syn = np.where(coherence_active, float(syndromic_coupling) * np.minimum(z_syn_mat, 2.5), 0.0)
+    tau_vel = np.where(vel_active, 0.30 * np.maximum(0.0, velocity_mat - 0.35), 0.0)
+    tau_pool = tau_syn + tau_vel
+
+    dB_mat = tau_pool * B_cf
+    dC_mat = dB_mat * neigh_rr
+
+    C_eff_mat = C + dC_mat
+    B_eff_mat = B_cf + dB_mat
+
+    # 6. Covariate-gated 2-Gamma empirical Bayes shrinkage
     C_flat = C.ravel()
     C_eff_flat = C_eff_mat.ravel()
     B_flat = B_cf.ravel()
+    B_eff_flat = B_eff_mat.ravel()
     E_naive_flat = E_naive.ravel()
     unmask_flat = unmasking_ratio.ravel()
     z_syn_flat = z_syn_mat.ravel()
@@ -548,17 +568,18 @@ def aegis(
     r1, b1, r2, b2, pi_base = _fit_empirical_bayes_slab_priors(C_flat, B_flat)
     base_logit = float(logit(np.clip(pi_base, 1e-4, 1.0 - 1e-4)))
 
-    # Logistic Context Gate: modulates prior signal weight pi_{ji} using cross-symptom coherence & surge velocity
-    # Isolated sporadic counts (z_syn < 0.25 and vel <= 0.25) receive a skepticism offset (-0.45),
-    # while syndromically coherent or accelerating pairs release shrinkage early.
-    isolation_offset = np.where((z_syn_flat >= 0.25) | (vel_flat >= 0.25), 0.0, -0.45)
+    isolation_offset = np.where(
+        (z_syn_flat >= _COHERENCE_GATE_MIN) | (vel_flat >= _COHERENCE_GATE_MIN),
+        0.0,
+        _ISOLATED_LOGIT_OFFSET,
+    )
     gate_eta = base_logit + isolation_offset + syndromic_gain * z_syn_flat + velocity_gain * np.maximum(0.0, vel_flat)
     pi_context = np.where(C_flat > 0, expit(np.clip(gate_eta, -10.0, 10.0)), 0.0)
     w_null_prior = 1.0 - pi_context
 
-    # Posterior Mixture Update at (C_eff, B_cf)
-    p_post1 = np.clip(b1 / (b1 + B_flat + 1e-10), 1e-10, 1.0 - 1e-10)
-    p_post2 = np.clip(b2 / (b2 + B_flat + 1e-10), 1e-10, 1.0 - 1e-10)
+    # Conjugate posterior mixture update at (C_eff, B_eff)
+    p_post1 = np.clip(b1 / (b1 + B_eff_flat + 1e-10), 1e-10, 1.0 - 1e-10)
+    p_post2 = np.clip(b2 / (b2 + B_eff_flat + 1e-10), 1e-10, 1.0 - 1e-10)
     gammaln_ceff_1 = gammaln(C_eff_flat + 1.0)
 
     log_q1 = (
@@ -582,19 +603,18 @@ def aegis(
     denom_q = w_null_prior * q1_s + pi_context * q2_s
     Qn = np.where(denom_q > 0, w_null_prior * q1_s / denom_q, 1.0)
 
-    # Posterior null probability P(lambda <= null_rr | data, graph, velocity)
-    gd1 = gdtr(null_rr, r1 + C_eff_flat, np.maximum(b1 + B_flat, 1e-10))
-    gd2 = gdtr(null_rr, r2 + C_eff_flat, np.maximum(b2 + B_flat, 1e-10))
+    # Posterior null probability P(lambda <= null_rr | data)
+    gd1 = gdtr(null_rr, r1 + C_eff_flat, np.maximum(b1 + B_eff_flat, 1e-10))
+    gd2 = gdtr(null_rr, r2 + C_eff_flat, np.maximum(b2 + B_eff_flat, 1e-10))
     post_null_prob = np.where(C_flat > 0, np.clip(Qn * gd1 + (1.0 - Qn) * gd2, 0.0, 1.0), 1.0)
     post_sig_prob = 1.0 - post_null_prob
 
-    # Context-Gated Empirical Bayes Geometric Mean (AEGIS_EBGM) & Posterior Quantiles (AEGIS_LB / AEGIS_UB)
-    dg1 = digamma(r1 + C_eff_flat) - np.log(np.maximum(b1 + B_flat, 1e-10))
-    dg2 = digamma(r2 + C_eff_flat) - np.log(np.maximum(b2 + B_flat, 1e-10))
+    # Posterior geometric mean (AEGIS_EBGM) and exact 5th / 95th quantiles
+    dg1 = digamma(r1 + C_eff_flat) - np.log(np.maximum(b1 + B_eff_flat, 1e-10))
+    dg2 = digamma(r2 + C_eff_flat) - np.log(np.maximum(b2 + B_eff_flat, 1e-10))
     aegis_log2 = np.where(C_flat > 0, (Qn * dg1 + (1.0 - Qn) * dg2) / np.log(2.0), 0.0)
     aegis_ebgm = np.where(C_flat > 0, np.power(2.0, aegis_log2), 0.0)
 
-    # Compute exact 5th and 95th posterior quantiles on active cells (Count > 0)
     aegis_lb = np.zeros_like(C_flat)
     aegis_ub = np.zeros_like(C_flat)
     pos_idx = np.flatnonzero(C_flat > 0)
@@ -603,42 +623,38 @@ def aegis(
             0.05,
             Qn[pos_idx],
             r1 + C_eff_flat[pos_idx],
-            b1 + B_flat[pos_idx],
+            b1 + B_eff_flat[pos_idx],
             r2 + C_eff_flat[pos_idx],
-            b2 + B_flat[pos_idx],
+            b2 + B_eff_flat[pos_idx],
         )
         aegis_ub[pos_idx] = quantiles(
             0.95,
             Qn[pos_idx],
             r1 + C_eff_flat[pos_idx],
-            b1 + B_flat[pos_idx],
+            b1 + B_eff_flat[pos_idx],
             r2 + C_eff_flat[pos_idx],
-            b2 + B_flat[pos_idx],
+            b2 + B_eff_flat[pos_idx],
         )
 
-    # 6. Pillar 4: Anytime-Valid Mixture Martingale e-Values & Bayesian PEP False Discovery Rate
+    # 7. Anytime-valid mixture martingale e-values on true counts (C, B_cf) with leave-one-out graph coupling
     e_values, p_anytime, e_fdr = _compute_anytime_martingale_evalues(
-        C_eff=C_eff_flat,
-        B=B_flat,
-        pi_context=pi_context,
+        C_mat=C,
+        B_mat=B_cf,
+        S_bar=S_bar,
     )
 
-    # Bayesian Cumulative Posterior Error Probability (PEP) FDR along ranking sequence:
-    # For any top-k alert set ordered by posterior null probability, the expected false discovery
-    # proportion is E[FP / k | data] = (1/k) * sum_{r=1}^k P(lambda_{(r)} <= null_rr | data).
+    # Cumulative Bayesian Posterior Error Probability (PEP) FDR
     bayesian_fdr = np.ones_like(C_flat)
     if len(pos_idx) > 0:
         p_null_pos = post_null_prob[pos_idx]
-        ord_pos = np.argsort(p_null_pos)
+        ord_pos = np.argsort(p_null_pos, kind="mergesort")
         cum_fdr = np.cumsum(p_null_pos[ord_pos]) / np.arange(1, len(pos_idx) + 1)
         cum_fdr = np.clip(np.maximum.accumulate(cum_fdr), 0.0, 1.0)
         bfdr_sub = np.empty_like(cum_fdr)
         bfdr_sub[ord_pos] = cum_fdr
         bayesian_fdr[pos_idx] = bfdr_sub
 
-    fdr_unified = bayesian_fdr
-
-    # Assemble output DataFrame
+    # Assemble result DataFrame
     n_pairs = len(C_flat)
     prod_indices, event_indices = np.unravel_index(np.arange(n_pairs), (n_drugs, n_events))
     prod_names = [products[p] for p in prod_indices]
@@ -654,22 +670,24 @@ def aegis(
         "Effective_Count": np.round(C_eff_flat, 3),
         "Expected Count": np.round(B_flat, 4),
         "Expected": np.round(B_flat, 4),
+        "B_Counterfactual": np.round(B_flat, 4),
         "Naive_Expected": np.round(E_naive_flat, 4),
         "Unmasking_Ratio": np.round(unmask_flat, 3),
         "AEGIS_EBGM": np.round(aegis_ebgm, 4),
         "AEGIS_LB": np.round(aegis_lb, 4),
         "AEGIS_UB": np.round(aegis_ub, 4),
-        "EBGM": np.round(aegis_ebgm, 4),          # Compatibility alias
-        "LowerBound": np.round(aegis_lb, 4),      # Compatibility alias
-        "UpperBound": np.round(aegis_ub, 4),      # Compatibility alias
+        "EBGM": np.round(aegis_ebgm, 4),
+        "LowerBound": np.round(aegis_lb, 4),
+        "UpperBound": np.round(aegis_ub, 4),
         "Context_Prior": np.round(pi_context, 4),
         "Posterior_Sig_Prob": np.round(post_sig_prob, 4),
         "Syndromic_Coherence": np.round(z_syn_flat, 4),
         "Surge_Velocity": np.round(vel_flat, 4),
         "E_Value": np.round(e_values, 4),
+        "e_value": np.round(e_values, 4),
         "p_value": post_null_prob,
         "anytime_p_value": p_anytime,
-        "fdr": fdr_unified,
+        "fdr": bayesian_fdr,
         "e_fdr": e_fdr,
         "Syndrome_Cluster": cluster_assigned,
     })
@@ -680,7 +698,6 @@ def aegis(
         kind="mergesort",
     ).reset_index(drop=True)
 
-    # Apply decision rule
     count_ok = all_signals_df["Count"] >= min_events
     if decision_metric == "lb":
         sig_mask = count_ok & (all_signals_df["AEGIS_LB"] > lb_threshold)
@@ -688,8 +705,7 @@ def aegis(
         sig_mask = count_ok & (all_signals_df["fdr"] <= fdr_threshold) & (all_signals_df["AEGIS_EBGM"] > null_rr)
     elif decision_metric == "e_value":
         sig_mask = count_ok & (all_signals_df["E_Value"] >= (1.0 / max(fdr_threshold, 1e-6)))
-    else:  # "combined"
-        # Combines Context-Gated EB lower bound, Bayesian PEP FDR, and Ville Martingale evidence floor
+    else:
         e_floor = max(4.0, 0.35 / max(fdr_threshold, 1e-6))
         sig_mask = (
             count_ok

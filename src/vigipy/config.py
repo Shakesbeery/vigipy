@@ -372,10 +372,10 @@ class AEGISConfig:
         sinkhorn_iters: Number of Sinkhorn-Huber unmasking iterations (default: 5).
         latent_rank: Rank of SVD residual baseline absorption for drug-class confounding (default: 2).
         min_npmi: Minimum positive NPMI edge weight to retain in the syndrome graph (default: 0.05).
-        syndromic_gain: Logistic gate sensitivity to syndromic coherence (default: 1.25).
-        syndromic_coupling: Effective count borrowing factor across NPMI neighbors (default: 0.35).
-        velocity_gain: Logistic gate sensitivity to Dual-EWMA surge velocity (default: 0.75).
-        fast_window_fraction: Fraction of most recent reports used for fast surge window (default: 0.25).
+        syndromic_gain: Logistic gate sensitivity to syndromic coherence (default: 1.50).
+        syndromic_coupling: Conjugate Poisson-Gamma neighborhood precision pooling weight (default: 0.60).
+        velocity_gain: Logistic gate sensitivity to Dual-EWMA surge velocity (default: 0.85).
+        fast_window_fraction: Effective fraction of recent reports weighted in Dual-EWMA velocity (default: 0.25).
         seed: Random seed for reproducibility (default: 42).
     """
 
@@ -389,9 +389,9 @@ class AEGISConfig:
     sinkhorn_iters: int = 5
     latent_rank: int = 2
     min_npmi: float = 0.05
-    syndromic_gain: float = 1.25
-    syndromic_coupling: float = 0.35
-    velocity_gain: float = 0.75
+    syndromic_gain: float = 1.50
+    syndromic_coupling: float = 0.60
+    velocity_gain: float = 0.85
     fast_window_fraction: float = 0.25
     seed: int = 42
 
