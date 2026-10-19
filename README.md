@@ -207,11 +207,11 @@ ddi_res = analyze(ddi_container, SCOREDDIConfig(interaction_model="multiplicativ
 ### Method Deep-Dives
 
 #### AEGIS: Anytime Empirical Graph-Informed Shrinkage
-Classical Empirical Bayes shrinkers (`GPS`, `BCPNN`) evaluate each drug–event cell in isolation—aggressively shrinking genuine emerging signals when counts are small ($n = 2\text{–}5$) while remaining vulnerable to blockbuster masking, media-driven notoriety surges, and sequential peeking inflation. `vigipy.aegis()` unifies four mathematical pillars:
-1. **Counterfactual LOCO Sinkhorn-Huber Unmasking**: Initializes Leave-One-Cell-Out (LOCO) marginals in $O(1)$ operations to break self-cloaking fixed points, then iteratively Winsorizes extreme spikes and applies Huber-clipped SVD to absorb diffuse indication confounding (`B_Counterfactual`, `Unmasking_Ratio`).
-2. **Top-$K$ Sharpened NPMI Syndromic Graph & Context-Gated Empirical Bayes**: Constructs a volume-invariant Normalized Pointwise Mutual Information (NPMI) symptom graph. When connected symptoms in a clinical syndrome co-activate on the same drug, a logistic context gate elevates the cell-specific signal prior $\pi_{ji}$ and pools syndromic evidence, releasing shrinkage early for true syndromes while penalizing isolated sporadic noise (`AEGIS_EBGM`, `AEGIS_LB`, `Syndrome_Coherence`).
-3. **Exposure-Normalized Dual-EWMA Surge Velocity**: Tracks the acceleration of an event's within-drug reporting share $C_{ji}(t)/R_j(t)$. Drug-wide media notoriety waves inflate $C_{ji}(t)$ and $R_j(t)$ proportionally (yielding `Surge_Velocity ≈ 0`), whereas focal biological hazards exhibit strong positive velocity.
-4. **Anytime-Valid Mixture Martingale $e$-Values**: Closed-form Gamma-Poisson mixture martingale $e$-values (`e_value`, `p_anytime`, `e_fdr`) satisfy Ville's inequality $\mathbb{P}_0(\exists t : M_{ji}(t) \ge 1/\alpha) \le \alpha$, controlling false discoveries under continuous quarterly peeking.
+Classical Empirical Bayes shrinkers (`GPS`, `BCPNN`) evaluate each drug–event cell in isolation—shrinking emerging signals when counts are small ($n = 2\text{–}5$) while remaining vulnerable to blockbuster masking, media-driven notoriety surges, and sequential peeking inflation. `vigipy.aegis()` addresses all four failure modes:
+1. **Counterfactual LOCO Sinkhorn-Huber Baseline**: Initializes Leave-One-Cell-Out (LOCO) marginals in $O(1)$ operations to break self-cloaking fixed points, then iteratively Winsorizes extreme spikes with analytical Gaussian upper-tail bias correction ($\phi(\delta) - \delta \Phi(-\delta)$) and applies Huber-clipped SVD to absorb diffuse indication confounding (`B_Counterfactual`, `Unmasking_Ratio`).
+2. **NPMI Syndromic Graph & Conjugate Poisson-Gamma Pooling**: Constructs a degree-regularized, top-$K$ pruned Normalized Pointwise Mutual Information (NPMI) symptom graph. When connected symptoms in a clinical syndrome co-activate on the same drug, a logistic context gate elevates the cell-specific signal prior $\pi_{ji}$ and pools conjugate pseudo-observations $(\Delta C_{ji}, \Delta B_{ji})$ into both the Gamma shape and rate parameters (`AEGIS_EBGM`, `AEGIS_LB`, `Syndromic_Coherence`).
+3. **Exposure-Normalized Dual-EWMA Surge Velocity**: Applies a continuous exponential moving kernel over the report sequence and normalizes recent counts against the drug's recent reporting share $C_{\text{fast}, ji} / R_{\text{fast}, j}$. Drug-wide media notoriety waves inflate $C_{ji}$ and $R_j$ proportionally (yielding `Surge_Velocity ≈ 0`), whereas focal biological hazards exhibit strong positive velocity.
+4. **Anytime-Valid Vovk–Wang Product Martingale $e$-Values**: Evaluates Wald-Poisson mixture martingales on true counts $(C_{ji}, B_{ji})$ and couples them with leave-one-out neighborhood $e$-values via Vovk & Wang's (2021) product martingale identity (`e_value`, `anytime_p_value`, `e_fdr`), satisfying Ville's inequality $\mathbb{P}_0(\exists t : E_{ji}(t) \ge 1/\alpha) \le \alpha$ under continuous quarterly peeking.
 
 ```python
 aegis_res = vg.aegis(
@@ -219,7 +219,7 @@ aegis_res = vg.aegis(
     min_events=3,
     fdr_threshold=0.05,        # Bayesian PEP or sequential e-BH FDR cutoff
     lb_threshold=1.05,         # 5th percentile posterior relative risk cutoff (AEGIS_LB)
-    decision_metric="combined",# "combined", "fdr", "lower_bound", or "e_value" (sequential)
+    decision_metric="combined",# "combined", "fdr", "lb", or "e_value" (sequential)
     latent_rank=2,             # Low-rank SVD indication filter on Winsorized residuals
 )
 print(aegis_res.signals[[

@@ -3,11 +3,11 @@
 ## 3.5.0
 
 ### Added
-- **AEGIS (`aegis`, `AEGISConfig`)**: Anytime Empirical Graph-Informed Shrinkage — a novel 4-pillar disproportionality methodology combining:
-  1. Counterfactual Leave-One-Cell-Out (LOCO) Sinkhorn-Huber Winsorization and Huber-clipped SVD baseline estimation (`B_Counterfactual`, `Unmasking_Ratio`) to eliminate across-drug blockbuster competition and within-drug self-cloaking.
-  2. Volume-invariant Top-$K$ sharpened Normalized Pointwise Mutual Information (NPMI) syndrome graph and logistic context-gated 2-Gamma Empirical Bayes shrinkage (`AEGIS_EBGM`, `AEGIS_LB`, `AEGIS_UB`, `Posterior_Null_Prob`, `Syndrome_Coherence`).
-  3. Exposure-normalized Dual-EWMA surge velocity (`Surge_Velocity`) that distinguishes drug-wide media notoriety waves from focal biological acceleration.
-  4. Non-asymptotic Gamma-Poisson mixture martingale $e$-values (`e_value`, `p_anytime`, `e_fdr`) and cumulative Bayesian Posterior Error Probability (`fdr`) for anytime-valid sequential surveillance under repeated quarterly peeking.
+- **AEGIS (`aegis`, `AEGISConfig`)**: Anytime Empirical Graph-Informed Shrinkage — a unified pharmacovigilance signal detection methodology combining:
+  1. Counterfactual Leave-One-Cell-Out (LOCO) initialization, analytically bias-corrected Huber Winsorization ($\phi(\delta) - \delta\Phi(-\delta)$), and Huber-clipped SVD baseline estimation (`B_Counterfactual`, `Unmasking_Ratio`) to eliminate across-drug blockbuster competition and within-drug self-cloaking.
+  2. Degree-regularized top-$K$ Normalized Pointwise Mutual Information (NPMI) syndrome graph with conjugate Poisson-Gamma neighborhood pooling $(\Delta C_{ji}, \Delta B_{ji})$ and covariate-gated 2-Gamma Empirical Bayes shrinkage (`AEGIS_EBGM`, `AEGIS_LB`, `AEGIS_UB`, `Posterior_Sig_Prob`, `Syndromic_Coherence`).
+  3. Continuous-kernel Exposure-Normalized Dual-EWMA surge velocity (`Surge_Velocity`) that separates drug-wide media notoriety waves from focal biological acceleration.
+  4. Non-asymptotic Wald-Poisson mixture martingale $e$-values coupled with leave-one-out neighborhood $e$-values via Vovk & Wang's (2021) product martingale identity (`e_value`, `anytime_p_value`, `e_fdr`) alongside cumulative Bayesian Posterior Error Probability (`fdr`).
 - **Zero-Inflated Gamma-Poisson Shrinker (`zigps`, `ZIGPSConfig`)**: 3-component Spike-and-Slab Empirical Bayes mixture model ($\pi_0 \delta_0(\lambda) + (1-\pi_0)[P \cdot \text{Gamma}_1 + (1-P) \cdot \text{Gamma}_2]$) with profile/bounded L-BFGS-B optimization, isolating structural drug–event zeros from the continuous relative-risk slab (`Pi0_Structural`, `Slab_Weight`, `EBGM`, `LowerBound`).
 - **Sequential Change-Point Surveillance (`maxsprt`, `MaxSPRTConfig`, `cusum_da`, `CUSUMConfig`)**:
   - Kulldorff's Maximized Sequential Probability Ratio Test (`maxsprt`) supporting both Poisson (`model="poisson"`) and conditioned Binomial (`model="binomial"`) log-likelihood ratios, upper-cap truncation (`upper_rr_cap`), and exact Kulldorff critical boundary (`CV_Boundary`, `Max_LLR`, `Anytime_e_value`).
