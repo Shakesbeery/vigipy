@@ -44,34 +44,34 @@ def _package_lasso_worker_results(
     aror_upper: np.ndarray | None = None,
     se: np.ndarray | None = None,
     p_value: np.ndarray | None = None,
-) -> dict[str, list]:
+) -> dict[str, Any]:
     """Assemble the standardized dictionary of worker results for a single adverse event."""
     n = len(products)
     coefs = lasso_coefs if lasso_coefs is not None else np.zeros(n)
     ci_l = ci_lower if ci_lower is not None else np.zeros(n)
     ci_u = ci_upper if ci_upper is not None else np.zeros(n)
 
-    res: dict[str, list] = {
+    res: dict[str, Any] = {
         "Product": list(products),
         "Adverse Event": [column_name] * n,
-        "Count": [int(c) for c in counts],
+        "Count": counts.astype(int) if hasattr(counts, "astype") else [int(c) for c in counts],
     }
 
     if resolved_family == "logistic":
         if relaxed:
-            res["L1 Coefficient"] = [float(c) for c in (l1_coefs if l1_coefs is not None else np.zeros(n))]
-        res["LASSO Coefficient"] = [float(c) for c in coefs]
-        res["CI Lower"] = [float(c) for c in ci_l]
-        res["CI Upper"] = [float(c) for c in ci_u]
-        res["aROR"] = [float(c) for c in (aror if aror is not None else np.ones(n))]
-        res["aROR Lower"] = [float(c) for c in (aror_lower if aror_lower is not None else np.ones(n))]
-        res["aROR Upper"] = [float(c) for c in (aror_upper if aror_upper is not None else np.ones(n))]
-        res["SE"] = [float(c) for c in (se if se is not None else np.zeros(n))]
-        res["p_value"] = [float(c) for c in (p_value if p_value is not None else np.ones(n))]
+            res["L1 Coefficient"] = l1_coefs if l1_coefs is not None else np.zeros(n)
+        res["LASSO Coefficient"] = coefs
+        res["CI Lower"] = ci_l
+        res["CI Upper"] = ci_u
+        res["aROR"] = aror if aror is not None else np.ones(n)
+        res["aROR Lower"] = aror_lower if aror_lower is not None else np.ones(n)
+        res["aROR Upper"] = aror_upper if aror_upper is not None else np.ones(n)
+        res["SE"] = se if se is not None else np.zeros(n)
+        res["p_value"] = p_value if p_value is not None else np.ones(n)
     else:
-        res["LASSO Coefficient"] = [float(c) for c in coefs]
-        res["CI Lower"] = [float(c) for c in ci_l]
-        res["CI Upper"] = [float(c) for c in ci_u]
+        res["LASSO Coefficient"] = coefs
+        res["CI Lower"] = ci_l
+        res["CI Upper"] = ci_u
 
     return res
 
@@ -468,19 +468,42 @@ def lasso(
     use_bootstrap: bool = False,
     relaxed: bool = True,
     n_jobs: int = 1,
+    fdr_threshold: float = 0.05,
 ) -> AnalysisResult:
-    """Applies LASSO regression or its variants to detect signals between product features and adverse events.
+    """Multivariable regularized LASSO regression for pharmacovigilance signal detection.
 
-    Clinical Intuition:
-        Single-drug disproportionality methods (PRR, ROR) suffer from 'confounding by polypharmacy'—when
-        patients take multiple medications simultaneously, innocent co-prescriptions can falsely appear
-        associated with an adverse reaction caused by another drug in the regimen. LASSO addresses this
-        by fitting a multivariable regression across all concurrent medications and clinical covariates
-        (e.g. Age, Sex), shrinking spurious associations to zero.
+    Controls for polypharmacy confounding and co-prescription bias by fitting regularized
+    models across concurrent medications. Two-stage relaxed LASSO screens active drugs
+    via L1 penalty and provides debiased adjusted Reporting Odds Ratios (aROR) and Wald CIs.
 
-        With two-stage relaxed LASSO (`relaxed=True`), Stage 1 screens candidate drugs using L1 regularization,
-        and Stage 2 refits an unpenalized model on active features to provide debiased adjusted Reporting
-        Odds Ratios (aROR) and exact Wald confidence intervals derived via SVD pseudo-inverse inference.
+    Parameters:
+        container: DataContainer holding binary report outcomes or count data.
+        lasso_thresh: Cutoff threshold for signal filtering (applied to coefficient or CI Lower).
+        alpha: L1 regularization penalty strength for linear LASSO.
+        min_events: Minimum event occurrences required for an AE to be evaluated.
+        num_bootstrap: Number of bootstrap iterations for confidence interval estimation.
+        ci: Percentile confidence interval coverage (default: 95).
+        use_lars: Whether to use Least Angle Regression (LassoLars).
+        use_IC: Whether to select penalty via Information Criterion (LassoLarsIC).
+        IC_criterion: Information criterion choice ('aic' or 'bic').
+        lasso_kwargs: Additional keyword arguments forwarded to the scikit-learn estimator.
+        use_glm: Whether to use Statsmodels L1-penalized Negative Binomial GLM.
+        nb_alpha: Dispersion parameter for Negative Binomial GLM.
+        lasso_alpha: Penalty parameter for GLM fitting.
+        family: Regression family ('logistic', 'linear', 'negative_binomial').
+        C: Inverse regularization strength parameter for logistic regression.
+        decision_metric: Metric for signal filtering ('lower_bound' or 'coefficient').
+        use_cv: Whether to tune regularization penalty via cross-validation.
+        cv: Number of cross-validation folds.
+        use_bootstrap: Whether to use bootstrap confidence intervals.
+        relaxed: When True and family='logistic', applies two-stage Relaxed LASSO: L1 screening
+            followed by unpenalized refit on active features for debiased aROR estimates.
+        n_jobs: Number of parallel CPU jobs for fitting across adverse events.
+        fdr_threshold: Target False Discovery Rate threshold.
+
+    Returns:
+        AnalysisResult containing all product-event associations, detected signals,
+        and model parameters.
     """
     if use_glm:
         resolved_family = "negative_binomial"
@@ -509,6 +532,7 @@ def lasso(
         "use_bootstrap": use_bootstrap,
         "relaxed": relaxed,
         "n_jobs": n_jobs,
+        "fdr_threshold": fdr_threshold,
     }
 
     X = container.product_features
@@ -638,6 +662,13 @@ def lasso(
         kind="mergesort",
     )
     all_signals.reset_index(drop=True, inplace=True)
+
+    if "p_value" in all_signals.columns:
+        from ..utils.common import compute_bh_fdr
+        all_signals["fdr"] = compute_bh_fdr(
+            all_signals["p_value"].values,
+            testable_mask=(all_signals["Count"].values > 0),
+        )
 
     if resolved_family == "logistic":
         if decision_metric == "lower_bound":

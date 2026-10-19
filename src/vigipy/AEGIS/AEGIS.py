@@ -63,73 +63,9 @@ def _extract_aegis_matrices(
     """Extract contingency matrix C (J x I), AE co-occurrence matrix S (I x I), total reports N_rep,
     and exponentially weighted fast-window contingency matrix C_fast (J x I).
     """
-    if container.type in ("binary", "binary_report", "binary_count", "binary_ddi"):
-        X_df = container.product_features
-        Y_df = container.event_outcomes
-        products = list(X_df.columns)
-        events = list(Y_df.columns)
+    from ..utils.common import extract_contingency_and_cooccurrence
 
-        if hasattr(X_df, "sparse") or issparse(X_df):
-            X_mat = X_df.sparse.to_coo().tocsr() if hasattr(X_df, "sparse") else X_df.tocsr()
-        else:
-            X_mat = np.ascontiguousarray(X_df.values, dtype=np.float64)
-
-        if hasattr(Y_df, "sparse") or issparse(Y_df):
-            Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
-        else:
-            Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
-
-        n_rep = float(X_mat.shape[0])
-        if issparse(X_mat) or issparse(Y_mat):
-            C_raw = X_mat.T @ Y_mat
-            C = C_raw.toarray() if issparse(C_raw) else np.asarray(C_raw, dtype=np.float64)
-            S_raw = Y_mat.T @ Y_mat
-            S_cooccur = S_raw.toarray() if issparse(S_raw) else np.asarray(S_raw, dtype=np.float64)
-        else:
-            C = X_mat.T @ Y_mat
-            S_cooccur = Y_mat.T @ Y_mat
-
-        # Compute exponentially weighted fast-window counts C_fast = X^T diag(w_fast) Y
-        n_rows = X_mat.shape[0]
-        if n_rows >= 20 and 0.05 <= fast_window_fraction < 1.0:
-            u = np.linspace(1.0 / n_rows, 1.0, n_rows, dtype=np.float64)
-            # Exponential kernel concentrated on recent reports, normalized to target window mass
-            tau = max(float(fast_window_fraction) * 0.75, 0.05)
-            w_raw = np.exp(-(1.0 - u) / tau)
-            w_fast = w_raw * (float(fast_window_fraction) * n_rows / max(float(np.sum(w_raw)), 1e-12))
-
-            if issparse(X_mat) or issparse(Y_mat):
-                X_weighted = csr_matrix(X_mat).multiply(w_fast[:, None])
-                C_fast_raw = X_weighted.T @ csr_matrix(Y_mat)
-                C_fast = C_fast_raw.toarray() if issparse(C_fast_raw) else np.asarray(C_fast_raw, dtype=np.float64)
-            else:
-                C_fast = (X_mat * w_fast[:, None]).T @ Y_mat
-        else:
-            C_fast = None
-
-    elif container.contingency is not None:
-        cont = container.contingency
-        products = list(cont.index)
-        events = list(cont.columns)
-        C = np.ascontiguousarray(cont.values, dtype=np.float64)
-        n_rep = float(max(container.N, np.sum(C), 1.0))
-
-        row_sums = np.maximum(np.sum(C, axis=1, keepdims=True), 1.0)
-        P_cond = C / row_sums
-        col_sums = np.sum(C, axis=0)
-        S_cooccur = (P_cond.T * col_sums[:, None]) @ P_cond
-        np.fill_diagonal(S_cooccur, col_sums)
-
-        C_fast = getattr(container, "fast_contingency", None)
-        if C_fast is not None and isinstance(C_fast, pd.DataFrame):
-            C_fast = np.ascontiguousarray(
-                C_fast.reindex(index=products, columns=events, fill_value=0.0).values,
-                dtype=np.float64,
-            )
-    else:
-        raise ValueError(f"Unsupported container type '{container.type}' for AEGIS.")
-
-    return C, S_cooccur, n_rep, products, events, C_fast
+    return extract_contingency_and_cooccurrence(container, fast_window_fraction=fast_window_fraction)
 
 
 def _sinkhorn_huber_baseline(
@@ -262,33 +198,10 @@ def _build_npmi_syndrome_graph(
     S_bar[row_deg <= 0] = 0.0
 
     # Spectral cluster assignment from normalized Laplacian
-    W_clust = 0.5 * (W + W.T)
-    deg_c = np.sum(W_clust, axis=1)
-    clusters = np.zeros(n_events, dtype=int)
-    mask = deg_c > 0
-    if np.sum(mask) >= 2:
-        try:
-            d_inv_sqrt = np.zeros_like(deg_c)
-            d_inv_sqrt[mask] = 1.0 / np.sqrt(deg_c[mask])
-            L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W_clust * d_inv_sqrt[None, :])
-            if n_events >= 4:
-                from scipy.sparse.linalg import eigsh
+    from ..utils.common import spectral_syndrome_clusters
 
-                k = min(3, n_events - 1)
-                vals, vecs = eigsh(csr_matrix(L_norm), k=k, which="SM")
-                order = np.argsort(vals)
-                vecs = vecs[:, order]
-                if k >= 3:
-                    clusters = (vecs[:, 1] > 0).astype(int) + 2 * (vecs[:, 2] > 0).astype(int)
-                else:
-                    clusters = (vecs[:, 1] > 0).astype(int)
-            else:
-                vals, vecs = np.linalg.eigh(L_norm)
-                if len(vals) > 1:
-                    clusters = (vecs[:, 1] > 0).astype(int)
-        except Exception as exc:
-            logger.debug("Spectral clustering fallback in _build_npmi_syndrome_graph: %s", exc)
-            clusters = np.zeros(n_events, dtype=int)
+    W_clust = 0.5 * (W + W.T)
+    clusters = spectral_syndrome_clusters(W_clust, n_clusters_max=4)
 
     return S_bar, clusters
 
@@ -472,6 +385,8 @@ def aegis(
     min_npmi: float = 0.05,
     syndromic_gain: float = 1.50,
     syndromic_coupling: float = 0.60,
+    martingale_coupling: float = 0.55,
+    top_k_neighbors: int = 4,
     velocity_gain: float = 0.85,
     fast_window_fraction: float = 0.25,
     seed: int = 42,
@@ -491,6 +406,8 @@ def aegis(
         min_npmi: Minimum positive NPMI threshold to retain an edge in the symptom graph.
         syndromic_gain: Logistic gate slope for syndromic neighborhood coherence.
         syndromic_coupling: Conjugate Poisson-Gamma neighborhood precision pooling weight.
+        martingale_coupling: Cross-graph product martingale coupling parameter (default: 0.55).
+        top_k_neighbors: Top-K neighbors per adverse event in syndrome graph (default: 4).
         velocity_gain: Logistic gate slope for Dual-EWMA surge velocity.
         fast_window_fraction: Effective fraction of recent reports weighted in Dual-EWMA velocity.
         seed: Random seed for randomized SVD reproducibility.
@@ -513,6 +430,8 @@ def aegis(
             "min_npmi": min_npmi,
             "syndromic_gain": syndromic_gain,
             "syndromic_coupling": syndromic_coupling,
+            "martingale_coupling": martingale_coupling,
+            "top_k_neighbors": top_k_neighbors,
             "velocity_gain": velocity_gain,
             "fast_window_fraction": fast_window_fraction,
             "seed": seed,
@@ -536,7 +455,9 @@ def aegis(
     unmasking_ratio = E_naive / np.maximum(B_cf, 1e-6)
 
     # 3. Positive NPMI symptom graph & leave-one-out neighborhood coherence
-    S_bar, clusters = _build_npmi_syndrome_graph(S_cooccur, n_rep=n_rep, min_npmi=min_npmi)
+    S_bar, clusters = _build_npmi_syndrome_graph(
+        S_cooccur, n_rep=n_rep, min_npmi=min_npmi, top_k=top_k_neighbors
+    )
     z0_mat = np.clip((C - B_cf) / np.sqrt(B_cf + 0.5), 0.0, 8.0)
     z_syn_mat = z0_mat @ S_bar.T
 
@@ -648,6 +569,7 @@ def aegis(
         C_mat=C,
         B_mat=B_cf,
         S_bar=S_bar,
+        martingale_coupling=martingale_coupling,
     )
 
     # Cumulative Bayesian Posterior Error Probability (PEP) FDR

@@ -65,18 +65,13 @@ def maxsprt(
     expected_method: ExpectedMethod = "mantel-haentzel",
     method_alpha: float = 1.0,
     critical_value: float | None = None,
+    upper_rr_cap: float = 100.0,
 ) -> AnalysisResult:
     """Kulldorff's Maximized Sequential Probability Ratio Test (MaxSPRT).
 
-    Clinical Intuition:
-        Regulatory agencies (CDC Vaccine Safety Datalink, FDA Sentinel) monitor safety
-        data continuously as reports arrive over time. Classical fixed-horizon tests
-        (PRR, ROR, Chi-Square) suffer severe Type I error inflation under repeated
-        sequential looks. MaxSPRT solves this by maximizing the composite one-sided
-        Likelihood Ratio over all RR > 1:
-            LLR = C * ln(C / E) - (C - E)   for C > E, else 0
-        and comparing LLR against a sequential boundary calibrated for continuous monitoring
-        up to an upper surveillance horizon `upper_limit`.
+    Sequential surveillance method that controls family-wise Type I error under repeated
+    monitoring. Maximizes the composite one-sided log-likelihood ratio (LLR) over all RR > 1
+    and tests against a continuous boundary calibrated for surveillance horizon `upper_limit`.
 
     Parameters:
         container: DataContainer holding drug-event counts and marginals.
@@ -85,8 +80,13 @@ def maxsprt(
         upper_limit: Expected count horizon U for continuous sequential boundary calibration.
         model: Likelihood model ('poisson' or 'binomial').
         expected_method: Method for expected count calculation ('mantel-haentzel', 'poisson', 'negative-binomial').
-        method_alpha: Parameter for negative-binomial expected method.
+        method_alpha: Dispersion parameter for negative-binomial expected method.
         critical_value: Optional user-supplied LLR critical value override.
+        upper_rr_cap: Optional cap on relative risk estimate (default: 100.0).
+
+    Returns:
+        AnalysisResult containing all evaluated pairs, detected sequential signals,
+        signal count, and calibrated critical values.
     """
     DATA = container.data
     N = container.N
@@ -102,6 +102,8 @@ def maxsprt(
     cv = float(critical_value) if critical_value is not None else _kulldorff_poisson_critical_value(alpha, upper_limit)
 
     rr_mle = np.where(n11 > expected, n11 / expected, 1.0)
+    if upper_rr_cap is not None:
+        rr_mle = np.minimum(rr_mle, float(upper_rr_cap))
 
     if model == "binomial":
         # Conditional binomial MaxSPRT comparing C = n11 vs marginals
@@ -170,6 +172,7 @@ def maxsprt(
             "alpha": alpha,
             "min_events": min_events,
             "upper_limit": upper_limit,
+            "upper_rr_cap": upper_rr_cap,
             "model": model,
             "expected_method": expected_method,
             "method_alpha": method_alpha,
@@ -196,17 +199,22 @@ def cusum_da(
 ) -> AnalysisResult:
     """Page's Poisson Cumulative Sum (CUSUM) Surveillance for Disproportionality Analysis.
 
-    Clinical Intuition:
-        While MaxSPRT tests against a composite global excess, Page's Poisson CUSUM is the
-        optimal sequential procedure (minimizing worst-case Average Run Length / detection
-        delay under Lorden's criterion) for detecting an abrupt regime shift from baseline
-        reporting (RR_0 = 1.0) to an elevated hazard regime (RR_1 = `target_rr`, e.g. 2.0).
+    Sequential change-point surveillance method calibrated for quick detection of an abrupt
+    elevation in reporting risk from RR=1.0 to `target_rr` while maintaining target in-control
+    Average Run Length (`arl0`).
 
-         Using Lucas (1985) optimal Poisson reference parameter:
-            k = (RR_1 - 1) / ln(RR_1)
-        the standardized excess CUSUM score accumulates positive evidence above allowance k*E:
-            CUSUM = max(0, C * ln(RR_1) - (RR_1 - 1) * E)
-        and compares it against Siegmund's ARL0-calibrated control limit h.
+    Parameters:
+        container: DataContainer holding drug-event counts and marginals.
+        target_rr: Target alternative relative risk R_1 > 1 to detect (default: 2.0).
+        arl0: Target in-control Average Run Length under the null (default: 500.0).
+        min_events: Minimum observed count required to trigger a signal (default: 3).
+        expected_method: Calculation method for expected counts ('mantel-haentzel', 'poisson', 'negative-binomial').
+        method_alpha: Dispersion parameter for negative-binomial expected method.
+        control_limit: Optional manual CUSUM control limit h override.
+
+    Returns:
+        AnalysisResult containing all evaluated pairs, detected sequential signals,
+        signal count, and CUSUM control parameters.
     """
     if target_rr <= 1.0:
         raise ValueError(f"target_rr must be > 1.0 for upward safety surveillance; got {target_rr}.")

@@ -12,9 +12,11 @@ from .SCORE import score_da, score_ddi
 from .AEGIS import aegis
 from .utils import convert, convert_binary, convert_multi_item, convert_ddi
 from .LongitudinalModel.LongitudinalModel import LongitudinalModel
+from .utils.Container import AnalysisResult, DataContainer
 from .analyze import analyze, analyze_all, get_default_config
 from .consensus import consensus_analysis, ConsensusResult
 from .config import (
+    BaseConfig,
     PRRConfig, RORConfig, RFETConfig, BCPNNConfig, GPSConfig, ZIGPSConfig,
     MaxSPRTConfig, CUSUMConfig, LASSOConfig, SCOREConfig, SCOREDDIConfig,
     AEGISConfig, MethodConfig,
@@ -31,12 +33,14 @@ __all__ = [
     # Original function API
     "prr", "ror", "rfet", "gps", "zigps", "maxsprt", "cusum_da",
     "bcpnn", "lasso", "score_da", "score_ddi", "aegis",
-    # Data conversion
+    # Data conversion and containers
     "convert", "convert_binary", "convert_multi_item", "convert_ddi",
+    "DataContainer", "AnalysisResult",
     # Longitudinal
     "LongitudinalModel",
     # Unified API
     "analyze", "analyze_all", "get_default_config",
+    "BaseConfig",
     "PRRConfig", "RORConfig", "RFETConfig",
     "BCPNNConfig", "GPSConfig", "ZIGPSConfig", "MaxSPRTConfig", "CUSUMConfig",
     "LASSOConfig", "SCOREConfig", "SCOREDDIConfig", "AEGISConfig",

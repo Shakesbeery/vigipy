@@ -183,21 +183,32 @@ def zigps(
     minimization_bounds: tuple[tuple[float, float], ...] | None = None,
     minimization_options: dict | None = None,
 ) -> AnalysisResult:
-    """Zero-Inflated Gamma-Poisson Shrinker (ZIGPS) for pharmacovigilance signal detection.
+    """Zero-Inflated Gamma-Poisson Shrinker (ZIGPS) for disproportionality analysis.
 
-    Clinical Intuition:
-        Spontaneous reporting contingency tables are overwhelmingly sparse (>90% zeros),
-        mixing random sampling zeros with structural zeros (drugs and events that are
-        biologically unrelated or never co-administered). Standard MGPS/GPS either discards
-        zero cells via truncation or allows excess zeros to pull the null Gamma component
-        toward zero, which subsequently under-shrinks noisy low-count cells (n=1, 2).
+    Extends Multi-item Gamma Poisson Shrinker (MGPS) by incorporating a point-mass spike
+    at zero to explicitly model structural zeros (unrelated or non-co-administered drug-event
+    pairs) alongside the bivariate Poisson mixture priors:
+        pi(lambda) = pi0 * delta_0(lambda) + (1 - pi0) * [w * Gamma(a1, b1) + (1 - w) * Gamma(a2, b2)]
+    This isolates structural zeros and prevents shrinkage distortion on sparse contingency tables.
 
-        ZIGPS explicitly introduces a point-mass spike at zero (pi0 * delta_0) alongside the
-        two-component Gamma mixture:
-            pi(lambda) = pi0 * delta_0(lambda) + (1 - pi0) * [w * Gamma(a1, b1) + (1 - w) * Gamma(a2, b2)]
-        By absorbing structural zeros into pi0 across the full contingency table, ZIGPS
-        recovers a cleaner, better-calibrated background Gamma distribution and reduces
-        false-positive shrinkage artifacts on sparse drug-event pairs.
+    Parameters:
+        container: A DataContainer holding contingency or binary report data.
+        relative_risk: Null hypothesis relative risk threshold (default: 1.0).
+        min_events: Minimum observed count required for a pair to be retained (default: 3).
+        decision_metric: Decision rule for filtering ('rank', 'fdr', or 'signals').
+        decision_thres: Cutoff threshold applied to the decision metric (default: 0.05).
+        ranking_statistic: Statistic used to rank candidate signals ('log2', 'p_value', or 'quantile').
+        prior_init: Initial parameters for the zero-inflated 2-Gamma mixture (alpha1, beta1, alpha2, beta2, w, pi0).
+        prior_param: Pre-fitted prior parameters vector.
+        expected_method: Calculation method for expected counts ('mantel-haentzel', 'poisson', 'negative-binomial').
+        method_alpha: Dispersion parameter for negative binomial expected count model.
+        minimization_method: SciPy optimization algorithm for fitting hyperpriors (default: 'L-BFGS-B').
+        minimization_bounds: Bounds for optimization variables.
+        minimization_options: Solver-specific options passed to scipy.optimize.minimize.
+
+    Returns:
+        AnalysisResult containing all drug-event pairs, detected signals, signal count,
+        and fitted prior parameters (including structural zero probability pi0).
     """
     if prior_init is None:
         prior_init_dict = {
@@ -375,6 +386,7 @@ def zigps(
         "LowerBound": LB,
         "UpperBound": UB,
         "StructuralZeroProb": Q0,
+        "Pi0_Structural": Q0,
     }
 
     return build_bayesian_result(
