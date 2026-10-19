@@ -77,19 +77,20 @@ def _package_lasso_worker_results(
 
 
 def _fit_relaxed_logistic(
-    X_mat, y, Z_mat, C, use_cv, cv, lasso_kwargs, z_crit, n_features, n_samples
+    X_mat, y, Z_mat, C, use_cv, cv, lasso_kwargs, z_crit, n_features, n_samples, X_fit=None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Two-stage relaxed logistic regression: L1 screening followed by unpenalized refit with sparse Hessian inference."""
     pos_cases = int(np.sum(y))
     neg_cases = len(y) - pos_cases
 
-    if Z_mat is not None:
-        if issparse(X_mat):
-            X_fit = hstack([Z_mat, X_mat]).tocsr()
+    if X_fit is None:
+        if Z_mat is not None:
+            if issparse(X_mat):
+                X_fit = hstack([Z_mat, X_mat]).tocsr()
+            else:
+                X_fit = np.column_stack([Z_mat, X_mat])
         else:
-            X_fit = np.column_stack([Z_mat, X_mat])
-    else:
-        X_fit = X_mat
+            X_fit = X_mat
 
     if use_cv and min(pos_cases, neg_cases) >= cv:
         cv_kwargs = dict(
@@ -191,7 +192,7 @@ def _fit_relaxed_logistic(
     ci_l[active_indices] = relaxed_coefs - z_crit * active_se
     ci_u[active_indices] = relaxed_coefs + z_crit * active_se
     z_scores = np.abs(relaxed_coefs) / active_se
-    p_vec[active_indices] = np.clip(2.0 * (1.0 - stats.norm.cdf(z_scores)), 0.0, 1.0)
+    p_vec[active_indices] = np.clip(2.0 * stats.norm.sf(z_scores), 0.0, 1.0)
 
     aror = np.exp(final_coefs)
     aror_l = np.exp(ci_l)
@@ -259,7 +260,7 @@ def _fit_standard_logistic(
         ci_u = np.percentile(boot_arr, 100.0 - (100.0 - ci) / 2.0, axis=0)
         se_vec = np.std(boot_arr, axis=0)
         z_sc = np.abs(coefs) / np.maximum(se_vec, 1e-9)
-        p_vec = np.clip(2.0 * (1.0 - stats.norm.cdf(z_sc)), 0.0, 1.0)
+        p_vec = np.clip(2.0 * stats.norm.sf(z_sc), 0.0, 1.0)
     else:
         p_pred = np.clip(clf.predict_proba(X_mat)[:, 1], 1e-6, 1.0 - 1e-6)
         w = p_pred * (1.0 - p_pred)
@@ -292,7 +293,7 @@ def _fit_standard_logistic(
                 ci_l[active_indices] = coefs[active_indices] - z_crit * active_se
                 ci_u[active_indices] = coefs[active_indices] + z_crit * active_se
                 z_scores = np.abs(coefs[active_indices]) / active_se
-                p_vec[active_indices] = np.clip(2.0 * (1.0 - stats.norm.cdf(z_scores)), 0.0, 1.0)
+                p_vec[active_indices] = np.clip(2.0 * stats.norm.sf(z_scores), 0.0, 1.0)
             except np.linalg.LinAlgError:
                 diag_w = np.sum(w[:, None] * (X_arr_dense[:, active_indices] ** 2), axis=0) + 1e-4
                 active_se = 1.0 / np.sqrt(diag_w)
@@ -300,7 +301,7 @@ def _fit_standard_logistic(
                 ci_l[active_indices] = coefs[active_indices] - z_crit * active_se
                 ci_u[active_indices] = coefs[active_indices] + z_crit * active_se
                 z_scores = np.abs(coefs[active_indices]) / active_se
-                p_vec[active_indices] = np.clip(2.0 * (1.0 - stats.norm.cdf(z_scores)), 0.0, 1.0)
+                p_vec[active_indices] = np.clip(2.0 * stats.norm.sf(z_scores), 0.0, 1.0)
 
     aror = np.exp(coefs)
     aror_l = np.exp(ci_l)
@@ -386,11 +387,15 @@ def _fit_single_adverse_event(
     nb_alpha,
     lasso_alpha,
     ci=95,
+    X_fit=None,
+    precomputed_counts=None,
 ):
     rng = np.random.default_rng(rng_seed)
     total_events = float(np.sum(y))
 
-    if issparse(X_mat):
+    if precomputed_counts is not None:
+        counts = precomputed_counts
+    elif issparse(X_mat):
         counts_raw = X_mat.T.dot(y)
         if isinstance(counts_raw, np.matrix):
             counts = np.nan_to_num(counts_raw.A1, nan=0.0).astype(int)
@@ -411,7 +416,7 @@ def _fit_single_adverse_event(
     if resolved_family == "logistic":
         if relaxed:
             l1_coefs, final_coefs, ci_l, ci_u, aror, aror_l, aror_u, se_vec, p_vec = _fit_relaxed_logistic(
-                X_mat, y, Z_mat, C, use_cv, cv, lasso_kwargs, z_crit, n_features, n_samples
+                X_mat, y, Z_mat, C, use_cv, cv, lasso_kwargs, z_crit, n_features, n_samples, X_fit=X_fit
             )
             return _package_lasso_worker_results(
                 products, column_name, counts, resolved_family, relaxed=True,
@@ -523,6 +528,26 @@ def lasso(
     else:
         Z_mat = None
 
+    if Z_mat is not None and resolved_family == "logistic" and relaxed:
+        if issparse(X_mat):
+            X_fit = hstack([Z_mat, X_mat]).tocsr()
+        else:
+            X_fit = np.column_stack([Z_mat, X_mat])
+    else:
+        X_fit = X_mat
+
+    if hasattr(ys, "sparse") or issparse(ys):
+        Y_mat = ys.sparse.to_coo().tocsr() if hasattr(ys, "sparse") else ys.tocsr()
+    else:
+        Y_mat = np.ascontiguousarray(ys.values, dtype=np.float64)
+
+    if issparse(X_mat) or issparse(Y_mat):
+        counts_mat_raw = (X_mat.T @ Y_mat)
+        counts_mat = counts_mat_raw.toarray() if issparse(counts_mat_raw) else np.asarray(counts_mat_raw)
+    else:
+        counts_mat = X_mat.T @ Y_mat
+    counts_mat = np.nan_to_num(counts_mat, nan=0.0).astype(int)
+
     n_samples = X_mat.shape[0]
     n_features = X_mat.shape[1]
     rng = np.random.default_rng(42)
@@ -567,6 +592,8 @@ def lasso(
                 nb_alpha=nb_alpha,
                 lasso_alpha=lasso_alpha,
                 ci=ci,
+                X_fit=X_fit,
+                precomputed_counts=counts_mat[:, i],
             )
             for i, column in enumerate(ys.columns)
         )
@@ -599,11 +626,17 @@ def lasso(
                 nb_alpha=nb_alpha,
                 lasso_alpha=lasso_alpha,
                 ci=ci,
+                X_fit=X_fit,
+                precomputed_counts=counts_mat[:, i],
             )
             for k, v in r_dict.items():
                 res[k].extend(v)
 
-    all_signals = pd.DataFrame(res).sort_values(by="LASSO Coefficient", ascending=False)
+    all_signals = pd.DataFrame(res).sort_values(
+        by=["LASSO Coefficient", "Product", "Adverse Event"],
+        ascending=[False, True, True],
+        kind="mergesort",
+    )
     all_signals.reset_index(drop=True, inplace=True)
 
     if resolved_family == "logistic":

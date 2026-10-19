@@ -136,7 +136,7 @@ class AnalysisResult:
         top_n = min(3, len(self.signals))
         lines = [header, "  Top Signals:"]
         score_col = None
-        for cand in ["PRR", "ROR", "RFET", "aROR", "EBGM", "SER", "quantile", "p_value"]:
+        for cand in ["PRR", "ROR", "RFET", "aROR", "AEGIS_EBGM", "EBGM", "SER", "LLR", "CUSUM", "quantile", "p_value"]:
             if cand in self.signals.columns:
                 score_col = cand
                 break
@@ -173,6 +173,8 @@ class DataContainer:
         feature_names: Product/drug feature column names.
         event_names: Adverse event column names.
         covariate_names: Covariate column names.
+        pair_mapping: Drug-pair mapping for DDI analysis.
+        fast_contingency: Optional recent-window contingency matrix for velocity estimation.
     """
 
     data: pd.DataFrame
@@ -186,6 +188,7 @@ class DataContainer:
     event_names: Optional[list] = None
     covariate_names: Optional[list] = None
     pair_mapping: Optional[dict[str, tuple[str, str]]] = None
+    fast_contingency: Optional[pd.DataFrame] = None
 
 
 class Container:

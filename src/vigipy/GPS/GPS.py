@@ -218,17 +218,18 @@ def gps(
 
     num_cell = len(n11)
 
-    # Posterior probability of the null hypothesis
+    # Posterior probability of the null hypothesis (log-domain stabilized)
     _p_post1 = np.clip(priors[1] / (priors[1] + expected + 1e-10), 1e-10, 1.0 - 1e-10)
     _p_post2 = np.clip(priors[3] / (priors[3] + expected + 1e-10), 1e-10, 1.0 - 1e-10)
     gammaln_n11_1_post = gammaln(n11 + 1.0)
     r1, r2 = priors[0], priors[2]
     log_qdb1 = gammaln(n11 + r1) - gammaln_n11_1_post - gammaln(r1) + r1 * np.log(_p_post1) + n11 * np.log(1.0 - _p_post1)
     log_qdb2 = gammaln(n11 + r2) - gammaln_n11_1_post - gammaln(r2) + r2 * np.log(_p_post2) + n11 * np.log(1.0 - _p_post2)
-    qdb1 = np.exp(log_qdb1)
-    qdb2 = np.exp(log_qdb2)
+    max_log_q = np.maximum(log_qdb1, log_qdb2)
+    qdb1 = np.exp(log_qdb1 - max_log_q)
+    qdb2 = np.exp(log_qdb2 - max_log_q)
 
-    _qn_denom = priors[4] * qdb1 + (1 - priors[4]) * qdb2
+    _qn_denom = priors[4] * qdb1 + (1.0 - priors[4]) * qdb2
     Qn = np.where(_qn_denom > 0, priors[4] * qdb1 / _qn_denom, priors[4])
 
     gd1 = gdtr(relative_risk, priors[0] + n11, np.maximum(priors[1] + expected, 1e-10))
@@ -315,10 +316,11 @@ def non_truncated_likelihood(p, n11, E, gammaln_n11_1=None):
     r1, r2, w = p[0], p[2], p[4]
     log_dnb1 = gammaln(n11 + r1) - gammaln_n11_1 - gammaln(r1) + r1 * np.log(p_nb1) + n11 * np.log(1.0 - p_nb1)
     log_dnb2 = gammaln(n11 + r2) - gammaln_n11_1 - gammaln(r2) + r2 * np.log(p_nb2) + n11 * np.log(1.0 - p_nb2)
-    dnb1 = np.exp(log_dnb1)
-    dnb2 = np.exp(log_dnb2)
-    term = (w * dnb1 + (1.0 - w) * dnb2) + 1e-7
-    return np.sum(-np.log(term))
+    max_log = np.maximum(log_dnb1, log_dnb2)
+    dnb1_scaled = np.exp(log_dnb1 - max_log)
+    dnb2_scaled = np.exp(log_dnb2 - max_log)
+    term_scaled = (w * dnb1_scaled + (1.0 - w) * dnb2_scaled) + np.exp(-max_log - 16.11809565095832)
+    return float(np.sum(-(max_log + np.log(np.maximum(term_scaled, 1e-300)))))
 
 
 def truncated_likelihood(p, n11, E, truncate, gammaln_n11_1=None):
@@ -330,9 +332,10 @@ def truncated_likelihood(p, n11, E, truncate, gammaln_n11_1=None):
     r1, r2, w = p[0], p[2], p[4]
     log_dnb1 = gammaln(n11 + r1) - gammaln_n11_1 - gammaln(r1) + r1 * np.log(p_nb1) + n11 * np.log(1.0 - p_nb1)
     log_dnb2 = gammaln(n11 + r2) - gammaln_n11_1 - gammaln(r2) + r2 * np.log(p_nb2) + n11 * np.log(1.0 - p_nb2)
-    dnb1 = np.exp(log_dnb1)
-    dnb2 = np.exp(log_dnb2)
-    term1 = w * dnb1 + (1.0 - w) * dnb2
+    max_log = np.maximum(log_dnb1, log_dnb2)
+    dnb1_scaled = np.exp(log_dnb1 - max_log)
+    dnb2_scaled = np.exp(log_dnb2 - max_log)
+    term1_log = max_log + np.log(np.maximum(w * dnb1_scaled + (1.0 - w) * dnb2_scaled, 1e-300))
 
     if truncate == 0:
         pnb1 = np.exp(r1 * np.log(p_nb1))
@@ -342,4 +345,4 @@ def truncated_likelihood(p, n11, E, truncate, gammaln_n11_1=None):
         pnb2 = betainc(r2, truncate + 1, p_nb2)
     term2 = 1.0 - (w * pnb1 + (1.0 - w) * pnb2)
 
-    return np.sum(-np.log(np.maximum(term1, 1e-300)) + np.log(np.maximum(term2, 1e-7)))
+    return float(np.sum(-term1_log + np.log(np.maximum(term2, 1e-7))))

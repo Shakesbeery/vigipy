@@ -99,11 +99,13 @@ def _build_container_from_matrix(
     product_label: str,
     ae_label: str,
     margin_threshold: int,
+    fast_mat: np.ndarray | None = None,
 ) -> DataContainer:
     """Construct a contingency DataContainer directly from a pre-aggregated 2D matrix."""
     from ..utils.data_prep import count as flatten_count
 
     mat_sub = mat[np.ix_(present_p, present_a)]
+    fast_sub = fast_mat[np.ix_(present_p, present_a)] if fast_mat is not None else None
     p_sub = p_uniques[present_p]
     a_sub = ae_uniques[present_a]
 
@@ -114,6 +116,8 @@ def _build_container_from_matrix(
             if np.all(r_mask) and np.all(c_mask):
                 break
             mat_sub = mat_sub[np.ix_(r_mask, c_mask)]
+            if fast_sub is not None:
+                fast_sub = fast_sub[np.ix_(r_mask, c_mask)]
             p_sub = p_sub[r_mask]
             a_sub = a_sub[c_mask]
             if mat_sub.size == 0:
@@ -123,12 +127,16 @@ def _build_container_from_matrix(
         c_mask = np.sum(mat_sub, axis=0) >= 1
         if not (np.all(r_mask) and np.all(c_mask)):
             mat_sub = mat_sub[np.ix_(r_mask, c_mask)]
+            if fast_sub is not None:
+                fast_sub = fast_sub[np.ix_(r_mask, c_mask)]
             p_sub = p_sub[r_mask]
             a_sub = a_sub[c_mask]
 
     data_cont = pd.DataFrame(mat_sub, index=p_sub, columns=a_sub)
     data_cont.index.name = product_label
     data_cont.columns.name = ae_label
+
+    fast_cont = pd.DataFrame(fast_sub, index=p_sub, columns=a_sub) if fast_sub is not None else None
 
     row_sums = np.sum(mat_sub, axis=1)
     col_sums = np.sum(mat_sub, axis=0)
@@ -139,6 +147,7 @@ def _build_container_from_matrix(
         N=data_df["events"].sum() if len(data_df) > 0 else 0,
         contingency=data_cont,
         type="contingency",
+        fast_contingency=fast_cont,
     )
 
 
@@ -355,7 +364,7 @@ class LongitudinalModel:
         effective_decay = decay_half_life if decay_half_life is not None else self.decay_half_life
         hl_days = _parse_half_life_days(effective_decay)
         counts = self.date_groups[self.count_col].sum()
-        is_gps = (getattr(model, "__name__", "") == "gps")
+        is_gps = getattr(model, "__name__", "") in ("gps", "zigps")
 
         if warm_start and n_jobs != 1:
             warnings.warn(
@@ -384,6 +393,7 @@ class LongitudinalModel:
                 p_codes, ae_codes = fast_idx["p_codes"], fast_idx["ae_codes"]
                 dates_arr = fast_idx["dates_arr"]
                 ts_dt = np.datetime64(timestamp)
+                delta = None
 
                 if hl_days is None:
                     if idx > prev_idx:
@@ -422,6 +432,7 @@ class LongitudinalModel:
                     prev_ts_dt = ts_dt
 
                 mat_use = cum_mat.astype(fast_idx["orig_dtype"], copy=False) if (hl_days is None and fast_idx["is_int"]) else cum_mat
+                fast_use = delta if (delta is not None and not np.array_equal(delta, cum_mat)) else None
                 return _build_container_from_matrix(
                     mat_use,
                     present_p,
@@ -431,6 +442,7 @@ class LongitudinalModel:
                     fast_idx["product_label"],
                     fast_idx["ae_label"],
                     fast_idx["margin_threshold"],
+                    fast_mat=fast_use,
                 )
 
             subset = self.data.iloc[:idx]
@@ -490,13 +502,16 @@ class LongitudinalModel:
 
                 slice_kwargs = dict(kwargs)
                 if warm_start and is_gps and last_prior_param is not None and "prior_param" not in slice_kwargs:
-                    slice_kwargs["prior_init"] = {
+                    init_d = {
                         "alpha1": float(last_prior_param[0]),
                         "beta1": float(last_prior_param[1]),
                         "alpha2": float(last_prior_param[2]),
                         "beta2": float(last_prior_param[3]),
                         "w": float(last_prior_param[4]),
                     }
+                    if len(last_prior_param) > 5:
+                        init_d["pi0"] = float(last_prior_param[5])
+                    slice_kwargs["prior_init"] = init_d
 
                 res = self._run_model(
                     model, sub_container, timestamp, include_gaps, slice_kwargs, store_all_signals

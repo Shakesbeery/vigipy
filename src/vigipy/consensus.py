@@ -22,12 +22,15 @@ _PRIMARY_STAT_CANDIDATES = [
     "RFET",
     "IC",
     "quantile",
+    "AEGIS_EBGM",
     "EBGM",
     "log2",
     "aROR",
     "LASSO Coefficient",
     "SER",
     "SRR",
+    "LLR",
+    "CUSUM",
     "count/expected",
 ]
 
@@ -55,7 +58,10 @@ def _extract_method_data(
     else:
         for cand_l, cand_u in [
             ("CI Lower", "CI Upper"),
+            ("AEGIS_LB", "AEGIS_UB"),
             ("LowerBound", "UpperBound"),
+            ("LowerCI", "UpperCI"),
+            ("SER Lower", "SER Upper"),
             ("aROR Lower", "aROR Upper"),
         ]:
             if cand_l in df.columns:

@@ -278,15 +278,137 @@ class SCOREDDIConfig:
     seed: int = 42
 
 
+@dataclass(frozen=True)
+class ZIGPSConfig:
+    """Configuration for Zero-Inflated Gamma-Poisson Shrinker (ZIGPS).
+
+    Parameters:
+        relative_risk: Null hypothesis relative risk threshold (default: 1.0).
+        min_events: Minimum observed count required for a pair to be retained (default: 3).
+        decision_metric: Decision rule for filtering ('rank', 'fdr', or 'signals').
+        decision_thres: Cutoff threshold applied to the decision metric (default: 0.05).
+        ranking_statistic: Statistic used to rank candidate signals ('log2', 'p_value', or 'quantile').
+        prior_init: Initial parameters for the zero-inflated 2-Gamma mixture (alpha1, beta1, alpha2, beta2, w, pi0).
+        prior_param: Pre-fitted prior parameters vector.
+        expected_method: Calculation method for expected counts ('mantel-haentzel', 'poisson', 'negative-binomial').
+        method_alpha: Dispersion parameter for negative binomial expected count model.
+        minimization_method: SciPy optimization algorithm for fitting hyperpriors (default: 'L-BFGS-B').
+        minimization_bounds: Bounds for optimization variables.
+        minimization_options: Solver-specific options passed to scipy.optimize.minimize.
+    """
+
+    method: str = "zigps"
+    relative_risk: float = 1.0
+    min_events: int = 3
+    decision_metric: DecisionMetric = "rank"
+    decision_thres: float = 0.05
+    ranking_statistic: GPSRankingStatistic = "log2"
+    prior_init: dict | None = None
+    prior_param: list | None = None
+    expected_method: ExpectedMethod = "mantel-haentzel"
+    method_alpha: float = 1.0
+    minimization_method: str = "L-BFGS-B"
+    minimization_bounds: tuple[tuple[float, float], ...] | None = None
+    minimization_options: dict | None = None
+
+
+@dataclass(frozen=True)
+class MaxSPRTConfig:
+    """Configuration for Kulldorff's Maximized Sequential Probability Ratio Test (MaxSPRT).
+
+    Parameters:
+        alpha: Overall sequential Type I error spending level (default: 0.05).
+        min_events: Minimum observed count required to trigger a signal (default: 3).
+        upper_limit: Expected count surveillance horizon U for continuous boundary calibration (default: 50.0).
+        model: Likelihood model ('poisson' or 'binomial').
+        expected_method: Method for expected count calculation ('mantel-haentzel', 'poisson', 'negative-binomial').
+        method_alpha: Dispersion parameter for negative-binomial expected method.
+        critical_value: Optional manual LLR critical value override.
+    """
+
+    method: str = "maxsprt"
+    alpha: float = 0.05
+    min_events: int = 3
+    upper_limit: float = 50.0
+    model: str = "poisson"
+    expected_method: ExpectedMethod = "mantel-haentzel"
+    method_alpha: float = 1.0
+    critical_value: float | None = None
+
+
+@dataclass(frozen=True)
+class CUSUMConfig:
+    """Configuration for Page's Poisson Cumulative Sum (CUSUM) Surveillance.
+
+    Parameters:
+        target_rr: Target alternative relative risk R_1 > 1 to detect (default: 2.0).
+        arl0: Target in-control Average Run Length ARL_0 under the null (default: 500.0).
+        min_events: Minimum observed count required to trigger a signal (default: 3).
+        expected_method: Method for expected count calculation ('mantel-haentzel', 'poisson', 'negative-binomial').
+        method_alpha: Dispersion parameter for negative-binomial expected method.
+        control_limit: Optional manual CUSUM control limit h override.
+    """
+
+    method: str = "cusum"
+    target_rr: float = 2.0
+    arl0: float = 500.0
+    min_events: int = 3
+    expected_method: ExpectedMethod = "mantel-haentzel"
+    method_alpha: float = 1.0
+    control_limit: float | None = None
+
+
+@dataclass(frozen=True)
+class AEGISConfig:
+    """Configuration for AEGIS (Anytime Empirical Graph-Informed Shrinkage).
+
+    Parameters:
+        min_events: Minimum observed count required to flag a signal (default: 3).
+        fdr_threshold: Target FDR / e-BH threshold for signal detection (default: 0.05).
+        lb_threshold: Minimum 5th-percentile Context-Gated Empirical Bayes lower bound (default: 1.0).
+        decision_metric: Decision rule ('combined', 'lb', 'fdr', or 'e_value').
+        null_rr: Null relative risk threshold for posterior probability calculation (default: 1.0).
+        huber_delta: Huber-Poisson outlier clipping threshold for Sinkhorn unmasking (default: 2.0).
+        sinkhorn_iters: Number of Sinkhorn-Huber unmasking iterations (default: 5).
+        latent_rank: Rank of SVD residual baseline absorption for drug-class confounding (default: 2).
+        min_npmi: Minimum positive NPMI edge weight to retain in the syndrome graph (default: 0.05).
+        syndromic_gain: Logistic gate sensitivity to syndromic coherence (default: 1.25).
+        syndromic_coupling: Effective count borrowing factor across NPMI neighbors (default: 0.35).
+        velocity_gain: Logistic gate sensitivity to Dual-EWMA surge velocity (default: 0.75).
+        fast_window_fraction: Fraction of most recent reports used for fast surge window (default: 0.25).
+        seed: Random seed for reproducibility (default: 42).
+    """
+
+    method: str = "aegis"
+    min_events: int = 3
+    fdr_threshold: float = 0.05
+    lb_threshold: float = 1.0
+    decision_metric: str = "combined"
+    null_rr: float = 1.0
+    huber_delta: float = 2.0
+    sinkhorn_iters: int = 5
+    latent_rank: int = 2
+    min_npmi: float = 0.05
+    syndromic_gain: float = 1.25
+    syndromic_coupling: float = 0.35
+    velocity_gain: float = 0.75
+    fast_window_fraction: float = 0.25
+    seed: int = 42
+
+
 MethodConfig = Union[
     PRRConfig,
     RORConfig,
     RFETConfig,
     BCPNNConfig,
     GPSConfig,
+    ZIGPSConfig,
+    MaxSPRTConfig,
+    CUSUMConfig,
     LASSOConfig,
     SCOREConfig,
     SCOREDDIConfig,
+    AEGISConfig,
 ]
 
 

@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.5.0
+
+### Added
+- **AEGIS (`aegis`, `AEGISConfig`)**: Anytime Empirical Graph-Informed Shrinkage — a novel 4-pillar disproportionality methodology combining:
+  1. Counterfactual Leave-One-Cell-Out (LOCO) Sinkhorn-Huber Winsorization and Huber-clipped SVD baseline estimation (`B_Counterfactual`, `Unmasking_Ratio`) to eliminate across-drug blockbuster competition and within-drug self-cloaking.
+  2. Volume-invariant Top-$K$ sharpened Normalized Pointwise Mutual Information (NPMI) syndrome graph and logistic context-gated 2-Gamma Empirical Bayes shrinkage (`AEGIS_EBGM`, `AEGIS_LB`, `AEGIS_UB`, `Posterior_Null_Prob`, `Syndrome_Coherence`).
+  3. Exposure-normalized Dual-EWMA surge velocity (`Surge_Velocity`) that distinguishes drug-wide media notoriety waves from focal biological acceleration.
+  4. Non-asymptotic Gamma-Poisson mixture martingale $e$-values (`e_value`, `p_anytime`, `e_fdr`) and cumulative Bayesian Posterior Error Probability (`fdr`) for anytime-valid sequential surveillance under repeated quarterly peeking.
+- **Zero-Inflated Gamma-Poisson Shrinker (`zigps`, `ZIGPSConfig`)**: 3-component Spike-and-Slab Empirical Bayes mixture model ($\pi_0 \delta_0(\lambda) + (1-\pi_0)[P \cdot \text{Gamma}_1 + (1-P) \cdot \text{Gamma}_2]$) with profile/bounded L-BFGS-B optimization, isolating structural drug–event zeros from the continuous relative-risk slab (`Pi0_Structural`, `Slab_Weight`, `EBGM`, `LowerBound`).
+- **Sequential Change-Point Surveillance (`maxsprt`, `MaxSPRTConfig`, `cusum_da`, `CUSUMConfig`)**:
+  - Kulldorff's Maximized Sequential Probability Ratio Test (`maxsprt`) supporting both Poisson (`model="poisson"`) and conditioned Binomial (`model="binomial"`) log-likelihood ratios, upper-cap truncation (`upper_rr_cap`), and exact Kulldorff critical boundary (`CV_Boundary`, `Max_LLR`, `Anytime_e_value`).
+  - Page/Lucas Poisson Cumulative Sum (`cusum_da`) change-point detector with exact reference drift $k = (\theta_1 - \theta_0)/\ln(\theta_1/\theta_0)$ and Siegmund's average-run-length ($\text{ARL}_0$) decision boundary calibration (`CUSUM_Stat`, `Threshold_h`, `Excess_Ratio`).
+- Full integration of `aegis`, `zigps`, `maxsprt`, and `cusum_da` across `analyze()`, `consensus_analysis()`, and `LongitudinalModel` (including hyperprior warm-starting for `ZIGPS`).
+
+### Changed
+- **SCORE-DA (`score_da`) Mathematical & Calibration Hardening**:
+  - Replaced raw Jaccard thresholding in `_build_syndromic_laplacian()` with scale-invariant chance-corrected Jaccard lift and top-$K$ ($K=4$) neighbor sharpening per adverse event so isolated background AEs are not shrunk by dense noise edges.
+  - Added LOCO initialization with iterative Winsorization and Huber-clipped Pearson residuals in `_estimate_low_rank_baseline()` to prevent focal signal self-absorption and multi-cell blockbuster masking.
+  - Added cooperative syndromic neighbor pooling into the FISTA target and debiased active-support inference (`z_score`, `fdr`).
+- **Vectorized Quantile Bisection (`quantile_funcs.py`)**: Added active unconverged index masking (`active = active[not_conv]`) so `scipy.stats.gamma.cdf` only evaluates unconverged indices during iterative root-finding.
+- **LASSO (`LASSO.py`) Pre-Allocation**: Hoisted sparse/dense feature matrix assembly (`X_fit`) and contingency cross-product (`X_mat.T @ Y_mat`) outside the per-event regression loop.
+
+### Fixed
+- **Extreme Tail Underflow (`common.py`, `LASSO.py`, `SCORE.py`)**: Replaced `1.0 - stats.norm.cdf(z)` with `stats.norm.sf(z)` to prevent IEEE-754 float64 cancellation to `0.0` for $z > 8.29$ (preserving exact $p$-values down to $10^{-308}$) and enforced deterministic `kind="mergesort"` ranking.
+- **Fractional Time-Decayed Counts in `RFET` & `SCORE-DA`**: Rounded fractional exponentially decayed counts before evaluating discrete hypergeometric PMF/SF in `RFET.py` and added non-integer count formatting support in `SCORE.py`.
+- **Large-Count Log-Space Stability in `GPS.py`**: Rewrote `non_truncated_likelihood`, `truncated_likelihood`, and posterior `Qn` in log-space (`gammaln` + log-sum-exp) to prevent overflow/underflow `NaN`s when cell counts exceed $1{,}000$.
+
 ## 3.4.2
 
 ### Added

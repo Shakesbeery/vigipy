@@ -46,21 +46,39 @@ def quantiles(threshold, Q, a1, b1, a2, b2, max_iter: int = 35, tol: float = 1e-
     m = np.zeros_like(M)
     x = np.ones_like(M)
 
+    n_elem = len(M)
+    if n_elem == 0:
+        return np.empty(0, dtype=np.float64)
+
+    active = np.arange(n_elem)
     for _ in range(max_iter):
-        one = Q_arr * gdtr(x, a1_arr, b1_arr)
-        two = (1.0 - Q_arr) * gdtr(x, a2_arr, b2_arr)
-        one = np.nan_to_num(one, nan=0.0)
-        two = np.nan_to_num(two, nan=0.0)
+        if len(active) == 0:
+            break
+        x_act = x[active]
+        a1_act = a1_arr[active]
+        b1_act = b1_arr[active]
+        a2_act = a2_arr[active]
+        b2_act = b2_arr[active]
+        q_act = Q_arr[active]
+
+        one = np.nan_to_num(q_act * gdtr(x_act, a1_act, b1_act), nan=0.0)
+        two = np.nan_to_num((1.0 - q_act) * gdtr(x_act, a2_act, b2_act), nan=0.0)
         cost = one + two - threshold
 
-        if np.all(np.abs(cost) < tol):
+        not_conv = np.abs(cost) >= tol
+        if not np.any(not_conv):
             break
 
-        S = np.sign(cost)
-        xnew = np.where(S > 0, (x + m) * 0.5, (M + x) * 0.5)
-        M = np.where(S > 0, x, M)
-        m = np.where(S > 0, m, x)
-        x = xnew
+        active = active[not_conv]
+        cost_nc = cost[not_conv]
+        x_nc = x[active]
+        m_nc = m[active]
+        M_nc = M[active]
+
+        pos = cost_nc > 0
+        x[active] = np.where(pos, (x_nc + m_nc) * 0.5, (M_nc + x_nc) * 0.5)
+        M[active] = np.where(pos, x_nc, M_nc)
+        m[active] = np.where(pos, m_nc, x_nc)
 
     if is_scalar:
         return float(x[0])

@@ -272,12 +272,20 @@ def build_freq_result(
     cols["event margin"] = ni1
     cols["fdr"] = FDR
 
-    all_signals = pd.DataFrame(cols, index=np.arange(len(n11))).sort_values(by=["p_value"])
+    all_signals = pd.DataFrame(cols, index=np.arange(len(n11))).sort_values(
+        by=["p_value", stat_column_name, "Count"],
+        ascending=[True, False, False],
+        kind="mergesort",
+    )
 
     if ranking_statistic == "CI":
         all_signals = all_signals.rename(
             columns={"p_value": "lower_bound_CI(95%)"}
-        ).sort_values(by=["lower_bound_CI(95%)"], ascending=False)
+        ).sort_values(
+            by=["lower_bound_CI(95%)", stat_column_name, "Count"],
+            ascending=[False, False, False],
+            kind="mergesort",
+        )
 
     return AnalysisResult(
         all_signals=all_signals,
@@ -303,7 +311,7 @@ def compute_ratio_inference(
     safe_se = np.where(zero_se, 1.0, se_log)
 
     null_val = np.log(relative_risk) if relative_risk > 0 else 0.0
-    pval_uni = 1.0 - norm.cdf(log_ratio, null_val, safe_se)
+    pval_uni = norm.sf(log_ratio, null_val, safe_se)
     pval_uni = np.where(zero_se, np.where(log_ratio > null_val, 0.0, 1.0), pval_uni)
     pval_uni = np.clip(np.nan_to_num(pval_uni, nan=1.0), 0.0, 1.0)
 
@@ -387,7 +395,9 @@ def build_bayesian_result(
 
     ascending = (ranking_statistic == "p_value")
     all_signals = pd.DataFrame(cols, index=np.arange(len(count))).sort_values(
-        by=[ranking_statistic], ascending=ascending
+        by=[ranking_statistic, "count/expected", "Count"],
+        ascending=[ascending, False, False],
+        kind="mergesort",
     )
     all_signals.index = np.arange(len(all_signals.index))
 

@@ -5,11 +5,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > [!IMPORTANT]
-> **What's New in `vigipy`**
-> - **High-Performance Longitudinal Engine & Time Decay (v3.4.2)**: Continuous exponential half-life time decay (`decay_half_life`), $O(N)$ incremental accumulation via semigroup scaling, streaming parallel slice execution, and $O(1)$ constant-memory surveillance.
-> - **SCORE-DA & SCORE-DDI**: A novel syndromic outlier estimation framework combining low-rank indication absorption, patient-level Graph Laplacian regularization, non-negative FISTA optimization, and higher-order multi-drug interaction discovery (`max_order=2, 3, ...`).
-> - **Cross-Method Consensus Engine (`consensus_analysis`)**: Triangulate alerts across frequentist, Bayesian, regression, and syndromic methods with agreement tiers, vote tallying, and concordance analytics (Jaccard, Cohen's Kappa, Spearman).
-> - **Two-Stage Relaxed LASSO**: Unbiased adjusted reporting odds ratios ($\text{aROR}$) with sparse memory scaling and clinical confounder adjustment (e.g. Age, Sex).
+> **What's New in `vigipy` (v3.5.0)**
+> - **AEGIS (`aegis` / `AEGISConfig`)**: **A**nytime **E**mpirical **G**raph-**I**nformed **S**hrinkage — a state-of-the-art 4-pillar pharmacovigilance engine uniting Leave-One-Cell-Out (LOCO) Sinkhorn-Huber blockbuster unmasking, top-$K$ NPMI syndromic graph coherence, exposure-normalized Dual-EWMA surge velocity (immune to media notoriety waves), and anytime-valid mixture martingale $e$-values (`e_value`, `AEGIS_EBGM`, `AEGIS_LB`).
+> - **Zero-Inflated Gamma-Poisson Shrinker (`zigps` / `ZIGPSConfig`)**: 3-component Spike-and-Slab Empirical Bayes mixture ($\pi_0 \delta_0(\lambda) + (1-\pi_0)[P \cdot \text{Gamma}_1 + (1-P) \cdot \text{Gamma}_2]$) isolating structural drug–event zeros from the continuous Gamma slab.
+> - **Sequential Change-Point Surveillance (`maxsprt` / `cusum_da`)**: Kulldorff's Maximized Sequential Probability Ratio Test (Poisson & Binomial models) and Lucas/Page Poisson log-likelihood-ratio CUSUM with Siegmund $\text{ARL}_0$ calibration.
+> - **SCORE-DA & Core Numerical Hardening**: Chance-corrected top-$K$ Jaccard graph sharpening, iterative LOCO Winsorization + Huber-clipped SVD, debiased FISTA inference, and log-space / survival-function precision across `GPS`, `RFET`, `LASSO`, and `common`.
+> - **High-Performance Longitudinal Engine & Time Decay**: Continuous exponential half-life time decay (`decay_half_life`), $O(N)$ incremental accumulation via semigroup scaling, and $O(1)$ constant-memory surveillance.
 
 ---
 
@@ -29,9 +30,11 @@ Safety surveillance in spontaneous reporting databases (e.g., FDA FAERS, WHO Vig
 │  STAGE 2: STATISTICAL MODELING & SIGNAL DETECTION                      │
 │  Screen for disproportionate drug-event associations via analyze()     │
 │  • Frequentist:      PRR, ROR, RFET                                    │
-│  • Bayesian:         GPS (Gamma Poisson), BCPNN (Information Component)│
+│  • Bayesian:         GPS, ZIGPS (Zero-Inflated), BCPNN                 │
+│  • Sequential:       MaxSPRT (Kulldorff LLR), CUSUM (Page/Lucas)       │
 │  • Multivariable:    Relaxed Logistic LASSO (Confounder Adjustment)    │
-│  • Syndromic:        SCORE-DA (Indication SVD + Graph Regularization)  │
+│  • Syndromic:        SCORE-DA (LOCO + Huber SVD + Graph FISTA)         │
+│  • Next-Gen Unified: AEGIS (Unmasking + NPMI Graph + Velocity + e-Val) │
 │  • Multi-Drug/DDI:   SCORE-DDI (Higher-Order Regimen Synergy)          │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
@@ -77,7 +80,7 @@ Pharmacovigilance datasets come in different formats: pre-aggregated frequency c
 
 ### 1. `convert()`: For Summary Contingency Tables
 * **When to use**: Your data is already aggregated into counts of `(Product, Adverse Event, Count)`.
-* **Compatible methods**: PRR, ROR, RFET, GPS, BCPNN, SCORE-DA.
+* **Compatible methods**: PRR, ROR, RFET, GPS, ZIGPS, BCPNN, MaxSPRT, CUSUM, SCORE-DA, AEGIS.
 
 ```python
 import pandas as pd
@@ -99,7 +102,7 @@ data = vg.convert(
 * **When to use**: You have individual patient report IDs (`report_id`). Multiple medications and symptoms can appear on the same report.
 * **Why it matters**: 
   - Required for **LASSO** (evaluates all concurrent medications simultaneously).
-  - Unlocks **SCORE-DA's syndromic graph**, ensuring symptom co-occurrence reflects true patient-level clinical syndromes rather than aggregate product correlation.
+  - Unlocks **AEGIS** and **SCORE-DA** patient-level syndromic graphs (`Y.T @ Y`) and **AEGIS** chronological surge velocity (`Surge_Velocity`).
   - Supports **confounder adjustment** (e.g. Age, Sex).
   - Uses `sparse=True` (CSR matrix storage) to handle millions of reports with low memory usage.
 
@@ -149,9 +152,13 @@ ddi_container = vg.convert_ddi(
 | **ROR** | Frequentist | Reporting Odds Ratio | Regulatory compliance (Woolf log-odds CI), matching case-control logic |
 | **RFET** | Frequentist | Mid-p Fisher's Exact Test | Ultra-sparse cells ($n \le 3$), eliminating normal approximation error |
 | **GPS** | Empirical Bayes | EBGM ($EB_{05}$ quantile) | Large database screening; stabilizes small-count variance |
+| **ZIGPS** | Zero-Inflated EB | Spike-and-Slab EBGM ($EB_{05}$) | High-sparsity tables (>80% structural zeros); prevents prior flattening |
 | **BCPNN** | Empirical Bayes | Information Component ($IC_{025}$) | Early warning surveillance; neural/Dirichlet credibility intervals |
+| **MaxSPRT** | Sequential LLR | Maximized LLR vs. $CV(\alpha)$ | Continuous vaccine/drug monitoring with exact upper-spending boundaries |
+| **CUSUM** | Change-Point | Page/Lucas Poisson CUSUM ($S_t$) | Detecting sudden regime shifts calibrated to target $\text{ARL}_0$ |
 | **LASSO** | Regularized GLM | Adjusted Odds Ratio ($\text{aROR}$) | Confounder adjustment; removing polypharmacy attribution noise |
-| **SCORE-DA** | Syndromic / Matrix | Syndromic Excess Rate ($\text{SER}$) | Eliminating indication confounding & masking; syndromic borrowing |
+| **SCORE-DA** | Syndromic / Matrix | Syndromic Excess Rate ($\text{SER}$) | Ultra-fast frequentist screening with LOCO deflation & graph borrowing |
+| **AEGIS** | Graph-Gated EB + Martingale | $\text{AEGIS\_EBGM}$ ($\text{AEGIS\_LB}$, $e\text{-value}$) | Early syndromic detection, blockbuster unmasking, notoriety immunity & anytime-valid sequential peeking |
 | **SCORE-DDI** | Factorial / Graph | Synergy Excess Rate ($\text{SER}_{\text{int}}$) | True synergy beyond single-drug solo risks; multi-drug regimens |
 
 ---
@@ -166,30 +173,78 @@ from vigipy import (
     PRRConfig,
     RORConfig,
     GPSConfig,
+    ZIGPSConfig,
+    MaxSPRTConfig,
+    CUSUMConfig,
     LASSOConfig,
     SCOREConfig,
+    AEGISConfig,
     SCOREDDIConfig,
 )
 
-# 1. Classical Frequentist (PRR with False Discovery Rate control)
-prr_res = analyze(data, PRRConfig(min_events=3, decision_metric="fdr", fdr_threshold=0.05))
+# 1. Next-Generation Graph-Informed Empirical Bayes & Martingale Surveillance (AEGIS)
+aegis_res = analyze(binary_data, AEGISConfig(min_events=3, fdr_threshold=0.05, lb_threshold=1.05))
 
-# 2. Empirical Bayes Shrinkage (GPS ranked by EB05)
-gps_res = analyze(data, GPSConfig(min_events=5, ranking_statistic="quantile"))
+# 2. Zero-Inflated Gamma-Poisson Shrinker (ZIGPS)
+zigps_res = analyze(data, ZIGPSConfig(min_events=3, ranking_statistic="quantile"))
 
-# 3. Multivariable Confounder-Adjusted LASSO
+# 3. Sequential Change-Point Surveillance (MaxSPRT & CUSUM)
+sprt_res = analyze(data, MaxSPRTConfig(model="poisson", alpha=0.05, min_events=2))
+cusum_res = analyze(data, CUSUMConfig(target_rr=2.0, arl0=500.0, min_events=2))
+
+# 4. Multivariable Confounder-Adjusted LASSO
 lasso_res = analyze(binary_data, LASSOConfig(min_events=3, relaxed=True, n_jobs=-1))
 
-# 4. Syndromic Low-Rank Discovery (SCORE-DA)
+# 5. Syndromic Low-Rank Discovery (SCORE-DA)
 score_res = analyze(data, SCOREConfig(latent_rank=5, syndromic_weight=0.5, fdr_threshold=0.05))
 
-# 5. Multi-Drug Interaction Discovery (SCORE-DDI)
+# 6. Multi-Drug Interaction Discovery (SCORE-DDI)
 ddi_res = analyze(ddi_container, SCOREDDIConfig(interaction_model="multiplicative", min_events=3))
 ```
 
 ---
 
 ### Method Deep-Dives
+
+#### AEGIS: Anytime Empirical Graph-Informed Shrinkage
+Classical Empirical Bayes shrinkers (`GPS`, `BCPNN`) evaluate each drug–event cell in isolation—aggressively shrinking genuine emerging signals when counts are small ($n = 2\text{–}5$) while remaining vulnerable to blockbuster masking, media-driven notoriety surges, and sequential peeking inflation. `vigipy.aegis()` unifies four mathematical pillars:
+1. **Counterfactual LOCO Sinkhorn-Huber Unmasking**: Initializes Leave-One-Cell-Out (LOCO) marginals in $O(1)$ operations to break self-cloaking fixed points, then iteratively Winsorizes extreme spikes and applies Huber-clipped SVD to absorb diffuse indication confounding (`B_Counterfactual`, `Unmasking_Ratio`).
+2. **Top-$K$ Sharpened NPMI Syndromic Graph & Context-Gated Empirical Bayes**: Constructs a volume-invariant Normalized Pointwise Mutual Information (NPMI) symptom graph. When connected symptoms in a clinical syndrome co-activate on the same drug, a logistic context gate elevates the cell-specific signal prior $\pi_{ji}$ and pools syndromic evidence, releasing shrinkage early for true syndromes while penalizing isolated sporadic noise (`AEGIS_EBGM`, `AEGIS_LB`, `Syndrome_Coherence`).
+3. **Exposure-Normalized Dual-EWMA Surge Velocity**: Tracks the acceleration of an event's within-drug reporting share $C_{ji}(t)/R_j(t)$. Drug-wide media notoriety waves inflate $C_{ji}(t)$ and $R_j(t)$ proportionally (yielding `Surge_Velocity ≈ 0`), whereas focal biological hazards exhibit strong positive velocity.
+4. **Anytime-Valid Mixture Martingale $e$-Values**: Closed-form Gamma-Poisson mixture martingale $e$-values (`e_value`, `p_anytime`, `e_fdr`) satisfy Ville's inequality $\mathbb{P}_0(\exists t : M_{ji}(t) \ge 1/\alpha) \le \alpha$, controlling false discoveries under continuous quarterly peeking.
+
+```python
+aegis_res = vg.aegis(
+    binary_data,
+    min_events=3,
+    fdr_threshold=0.05,        # Bayesian PEP or sequential e-BH FDR cutoff
+    lb_threshold=1.05,         # 5th percentile posterior relative risk cutoff (AEGIS_LB)
+    decision_metric="combined",# "combined", "fdr", "lower_bound", or "e_value" (sequential)
+    latent_rank=2,             # Low-rank SVD indication filter on Winsorized residuals
+)
+print(aegis_res.signals[[
+    "Product", "Adverse Event", "Count", "B_Counterfactual",
+    "AEGIS_EBGM", "AEGIS_LB", "Surge_Velocity", "e_value", "fdr"
+]])
+```
+
+#### ZIGPS: Zero-Inflated Gamma-Poisson Shrinker
+In large spontaneous reporting matrices where $>80\%$ of drug–event cells are zero (due to non-overlapping clinical populations or impossible indication pairs), fitting a standard 2-Gamma prior (`GPS`) forces the lower Gamma component toward zero, artificially inflating posterior relative risks on small counts. `vigipy.zigps()` introduces an explicit point-mass spike $\pi_0 \delta_0(\lambda)$ alongside the two-component Gamma slab.
+
+```python
+zigps_res = vg.zigps(
+    data,
+    min_events=3,
+    decision_metric="fdr",
+    ranking_statistic="quantile",
+)
+print(zigps_res.signals[["Product", "Adverse Event", "Count", "EBGM", "LowerBound", "Pi0_Structural", "fdr"]])
+```
+
+#### Sequential Surveillance: MaxSPRT & CUSUM
+For continuous vaccine and post-market drug monitoring:
+* `vigipy.maxsprt()`: Implements Kulldorff's Maximized Sequential Probability Ratio Test (`model="poisson"` or `"binomial"`) with exact Kulldorff critical boundary lookup (`CV_Boundary`) and upper relative-risk cap (`upper_rr_cap`).
+* `vigipy.cusum_da()`: Implements Lucas/Page's Poisson log-likelihood-ratio CUSUM with reference drift $k = (\theta_1 - \theta_0)/\ln(\theta_1/\theta_0)$ and Siegmund's average-run-length ($\text{ARL}_0$) threshold calibration.
 
 #### Multivariable Relaxed LASSO
 When patients take multiple drugs, single-drug methods suffer from **confounding by co-prescription** (e.g., antiemetics falsely flagged for chemotherapy toxicities).
@@ -209,15 +264,15 @@ print(result.signals[["Product", "Adverse Event", "Count", "aROR", "CI Lower", "
 
 #### SCORE-DA: Syndromic Cellwise Outlier & Residual Estimation
 Traditional disproportionality methods assume independence across symptom columns and suffer from **blockbuster masking** and **indication confounding**.
-* **Indication Absorption**: Uses Truncated SVD on standardized Pearson residuals to absorb shared drug-class and indication baselines.
-* **Syndromic Borrowing**: Builds a patient-level Graph Laplacian ($\mathbf{L}_{\text{AE}}$) from co-occurring symptoms, allowing related events in a syndrome (e.g. *Urticaria + Angioedema + Hypotension*) to borrow strength without relying on external ontologies.
+* **Indication Absorption**: Uses LOCO-initialized iterative Winsorization and Huber-clipped Truncated SVD on standardized Pearson residuals to absorb shared drug-class and indication baselines without absorbing focal signals.
+* **Syndromic Borrowing**: Builds a chance-corrected, top-$K$ sharpened Graph Laplacian ($\mathbf{L}_{\text{AE}}$) from co-occurring symptoms, allowing related events in a syndrome (e.g. *Urticaria + Angioedema + Hypotension*) to borrow strength without relying on external ontologies.
 * **Masking Deflation**: Iteratively deflates detected signals to unmask hidden safety signals suppressed by blockbuster drugs.
 
 ```python
 score_res = vg.score_da(
     data,
     latent_rank=5,           # Number of latent indication/class factors to absorb
-    syndromic_weight=0.5,    # Graph Laplacian smoothness coupling
+    syndromic_weight=0.5,    # Graph Laplacian smoothness & cooperative coupling
     deflate_iterations=2,    # Iterative deflation passes to eliminate masking
     fdr_threshold=0.05,      # Benjamini-Hochberg FDR cutoff
 )
@@ -261,9 +316,10 @@ Different models possess distinct biases: frequentist ratios are noisy on small 
 # Run consensus across default regulatory methods (or pass custom configs)
 configs = [
     vg.PRRConfig(min_events=3),
-    vg.GPSConfig(min_events=3),
+    vg.ZIGPSConfig(min_events=3),
     vg.LASSOConfig(min_events=3),
     vg.SCOREConfig(min_events=3),
+    vg.AEGISConfig(min_events=3),
 ]
 
 consensus = vg.consensus_analysis(
@@ -328,12 +384,14 @@ print(df_panel.head())
 | Scenario | Recommended Workflow | Key Parameters |
 | :--- | :--- | :--- |
 | **Routine regulatory submission (FDA / EMA)** | `vg.convert()` $\rightarrow$ `vg.ror()` or `vg.prr()` | `min_events=3`, `ranking_statistic="CI"` |
-| **Automated screening across large database** | `vg.convert()` $\rightarrow$ `vg.gps()` or `vg.bcpnn()` | `ranking_statistic="quantile"`, `decision_metric="fdr"` |
+| **Automated screening across large database** | `vg.convert()` $\rightarrow$ `vg.zigps()`, `vg.gps()`, or `vg.bcpnn()` | `ranking_statistic="quantile"`, `decision_metric="fdr"` |
+| **Early syndromic signals, blockbuster unmasking & media notoriety immunity** | `vg.convert_binary()` $\rightarrow$ `vg.aegis()` | `fdr_threshold=0.05`, `lb_threshold=1.05`, `decision_metric="combined"` |
+| **Continuous sequential surveillance (repeated quarterly peeking)** | `vg.aegis(decision_metric="e_value")`, `vg.maxsprt()`, or `vg.cusum_da()` | `alpha=0.05` / `arl0=500.0` |
 | **High polypharmacy / co-prescription confounding** | `vg.convert_binary(sparse=True)` $\rightarrow$ `vg.lasso()` | `relaxed=True`, `covariate_labels=["age", "sex"]` |
-| **Indication confounding & symptom clustering** | `vg.convert_binary()` $\rightarrow$ `vg.score_da()` | `latent_rank=5`, `syndromic_weight=0.5` |
+| **Ultra-fast frequentist syndromic screening** | `vg.convert_binary()` $\rightarrow$ `vg.score_da()` | `latent_rank=5`, `syndromic_weight=0.5` |
 | **Investigating drug-drug or multi-drug interactions** | `vg.convert_ddi(max_order=2)` $\rightarrow$ `vg.score_ddi()` | `min_co_reports=5`, `interaction_model="multiplicative"` |
 | **Multi-method signal arbitration & triage** | `vg.consensus_analysis()` | `min_consensus=3` or `min_consensus=0.6` |
-| **Monitoring signal emergence over time** | `vg.LongitudinalModel()` | `time_unit="QE"`, `warm_start=True` |
+| **Monitoring signal emergence over time** | `vg.LongitudinalModel()` | `time_unit="QE"`, `warm_start=True`, `decay_half_life="365D"` |
 
 ---
 
