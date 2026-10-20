@@ -12,9 +12,13 @@ from .config import (
     RFETConfig,
     BCPNNConfig,
     GPSConfig,
+    ZIGPSConfig,
+    MaxSPRTConfig,
+    CUSUMConfig,
     LASSOConfig,
     SCOREConfig,
     SCOREDDIConfig,
+    AEGISConfig,
 )
 from .utils.Container import AnalysisResult, DataContainer
 from .utils.types import MethodName
@@ -25,9 +29,13 @@ _METHOD_REGISTRY: dict[str, type] = {
     "rfet": RFETConfig,
     "bcpnn": BCPNNConfig,
     "gps": GPSConfig,
+    "zigps": ZIGPSConfig,
+    "maxsprt": MaxSPRTConfig,
+    "cusum": CUSUMConfig,
     "lasso": LASSOConfig,
     "score": SCOREConfig,
     "score_ddi": SCOREDDIConfig,
+    "aegis": AEGISConfig,
 }
 
 
@@ -66,6 +74,15 @@ def analyze(container: DataContainer, config: MethodConfig) -> AnalysisResult:
     elif method_name == "gps":
         from .GPS import gps
         return gps(container, **params)
+    elif method_name == "zigps":
+        from .ZIGPS import zigps
+        return zigps(container, **params)
+    elif method_name == "maxsprt":
+        from .Sequential import maxsprt
+        return maxsprt(container, **params)
+    elif method_name == "cusum":
+        from .Sequential import cusum_da
+        return cusum_da(container, **params)
     elif method_name == "lasso":
         from .LASSO import lasso
         return lasso(container, **params)
@@ -75,6 +92,9 @@ def analyze(container: DataContainer, config: MethodConfig) -> AnalysisResult:
     elif method_name == "score_ddi":
         from .SCORE import score_ddi
         return score_ddi(container, **params)
+    elif method_name == "aegis":
+        from .AEGIS import aegis
+        return aegis(container, **params)
     else:
         raise ValueError(f"Unknown method: {method_name!r}")
 

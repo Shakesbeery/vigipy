@@ -128,11 +128,11 @@ def _build_syndromic_laplacian(
     S_cooccur: np.ndarray,
     min_jaccard: float = 0.01,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute the normalized graph Laplacian and spectral syndrome clusters.
+    """Compute the chance-corrected normalized graph Laplacian and spectral syndrome clusters.
 
     Parameters:
         S_cooccur: (I x I) co-occurrence matrix between adverse events.
-        min_jaccard: Minimum Jaccard similarity threshold to retain an edge.
+        min_jaccard: Minimum chance-corrected Jaccard similarity threshold to retain an edge.
 
     Returns:
         L_norm: (I x I) normalized graph Laplacian matrix (PSD guaranteed, isolated nodes unpenalized).
@@ -142,47 +142,49 @@ def _build_syndromic_laplacian(
     if n_events <= 1:
         return np.zeros((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
 
-    if issparse(S_cooccur):
-        diag_s = S_cooccur.diagonal()
-        S_coo = S_cooccur.tocoo()
-        non_diag = S_coo.row != S_coo.col
-        rows = S_coo.row[non_diag]
-        cols = S_coo.col[non_diag]
-        vals = S_coo.data[non_diag]
-        denom_sp = diag_s[rows] + diag_s[cols] - vals
-        w_vals = np.where(denom_sp > 0, vals / np.maximum(denom_sp, 1e-9), 0.0)
-        w_vals = np.clip(w_vals, 0.0, 1.0)
-        keep = w_vals >= min_jaccard
-        W_sp = csr_matrix((w_vals[keep], (rows[keep], cols[keep])), shape=(n_events, n_events))
-        W = 0.5 * (W_sp + W_sp.T)
-        d = np.array(W.sum(axis=1)).ravel()
-        mask = d > 0
-        if not np.any(mask):
-            return csr_matrix((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
-        d_inv_sqrt = np.zeros_like(d)
-        d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
-        from scipy.sparse import diags
-        D_inv = diags(d_inv_sqrt)
-        L_norm = diags(mask.astype(np.float64)) - D_inv @ W @ D_inv
-        L_norm = L_norm.tocsr()
+    S_dense = S_cooccur.toarray().astype(np.float64) if issparse(S_cooccur) else np.asarray(S_cooccur, dtype=np.float64)
+    diag_s = np.maximum(np.diag(S_dense), 0.0)
+    # Scale-invariant independence expectation across both binary report counts and contingency profiles
+    row_s = np.sum(S_dense, axis=1)
+    tot_s = max(float(np.sum(row_s)), 1e-9)
+    expected_null = np.outer(row_s, row_s) / tot_s
+
+    denom = diag_s[:, None] + diag_s[None, :] - S_dense
+    denom = np.maximum(denom, 1e-9)
+    # Chance-corrected Jaccard lift: only retain co-occurrence exceeding random independence
+    excess_cooccur = np.maximum(0.0, S_dense - 1.20 * expected_null)
+    W = np.divide(excess_cooccur, denom, where=(denom > 0))
+    np.fill_diagonal(W, 0.0)
+    W = np.clip(W, 0.0, 1.0)
+
+    eff_thresh = max(float(min_jaccard), 0.03)
+    W[W < eff_thresh] = 0.0
+
+    # Top-K neighborhood sharpening per AE to prevent dense background dilution
+    top_k = min(4, max(1, n_events - 1))
+    if n_events > top_k + 1:
+        W_pruned = np.zeros_like(W)
+        for i in range(n_events):
+            row = W[i]
+            pos_idx = np.flatnonzero(row > 0.0)
+            if len(pos_idx) > top_k:
+                top_idx = pos_idx[np.argsort(row[pos_idx])[-top_k:]]
+                W_pruned[i, top_idx] = row[top_idx]
+            elif len(pos_idx) > 0:
+                W_pruned[i, pos_idx] = row[pos_idx]
+        W = 0.5 * (W_pruned + W_pruned.T)
     else:
-        diag_s = np.diag(S_cooccur)
-        denom = diag_s[:, None] + diag_s[None, :] - S_cooccur
-        denom = np.maximum(denom, 1e-9)
-        W = np.divide(S_cooccur, denom, where=(denom > 0))
-        np.fill_diagonal(W, 0.0)
-        W = np.clip(W, 0.0, 1.0)
-        W[W < min_jaccard] = 0.0
         W = 0.5 * (W + W.T)
-        d = np.sum(W, axis=1)
-        mask = d > 0
-        if not np.any(mask):
-            return np.zeros((n_events, n_events), dtype=np.float64), np.zeros(n_events, dtype=int)
-        d_inv_sqrt = np.zeros_like(d)
-        d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
-        L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
-        if n_events > 500:
-            L_norm = csr_matrix(L_norm)
+
+    d = np.sum(W, axis=1)
+    mask = d > 0
+    if not np.any(mask):
+        L_out = csr_matrix((n_events, n_events), dtype=np.float64) if n_events > 500 else np.zeros((n_events, n_events), dtype=np.float64)
+        return L_out, np.zeros(n_events, dtype=int)
+
+    d_inv_sqrt = np.zeros_like(d)
+    d_inv_sqrt[mask] = 1.0 / np.sqrt(d[mask])
+    L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
 
     # Spectral syndrome clustering: use Fiedler vector / second smallest eigenvector
     try:
@@ -247,7 +249,9 @@ def _extract_matrices_from_container(
         products = list(cont.index)
         events = list(cont.columns)
         C = np.ascontiguousarray(cont.values, dtype=np.float64)
-        S_cooccur = C.T @ C
+        row_sums = np.maximum(np.sum(C, axis=1, keepdims=True), 1.0)
+        C_norm = C / row_sums
+        S_cooccur = C_norm.T @ C_norm
     else:
         raise ValueError(f"Unsupported container type '{container.type}' for SCORE.")
 
@@ -274,7 +278,7 @@ def _compute_lipschitz_constant(L_ae: np.ndarray, syndromic_weight: float, seed:
 
 
 def _estimate_low_rank_baseline(C_current: np.ndarray, effective_rank: int, seed: int = 42) -> np.ndarray:
-    """Estimate expected baseline rates absorbing indication/class confounding via randomized SVD on Pearson residuals."""
+    """Estimate expected baseline rates absorbing indication/class confounding via LOCO + Huber-clipped SVD."""
     R_row = np.sum(C_current, axis=1)
     C_col = np.sum(C_current, axis=0)
     N_tot = float(np.sum(R_row))
@@ -282,24 +286,46 @@ def _estimate_low_rank_baseline(C_current: np.ndarray, effective_rank: int, seed
     if N_tot <= 0:
         return np.full_like(C_current, 1e-4)
 
-    E_mat = np.outer(R_row, C_col) / N_tot
-    denom_var = E_mat * (1.0 - R_row[:, None] / N_tot) * (1.0 - C_col[None, :] / N_tot)
+    # Step 1: Leave-One-Cell-Out (LOCO) initial expectation followed by iterative Winsorization
+    R_minus = np.maximum(R_row[:, None] - C_current, 0.0)
+    C_minus = np.maximum(C_col[None, :] - C_current, 0.0)
+    N_minus = np.maximum(N_tot - R_row[:, None] - C_col[None, :] + C_current, 1.0)
+    E_mat = np.maximum((R_minus * C_minus) / N_minus, 1e-4)
+    R_w, C_w, N_w = R_row, C_col, N_tot
+
+    for _ in range(4):
+        cap = E_mat + 2.5 * np.sqrt(np.maximum(E_mat, 1.0))
+        excess = np.maximum(0.0, C_current - E_mat)
+        col_share = excess / np.maximum(C_col[None, :], 1.0)
+        row_share = excess / np.maximum(R_row[:, None], 1.0)
+        hijack_mask = (C_current > 2.0 * E_mat) & (C_current > cap) & ((col_share > 0.15) | ((row_share > 0.50) & (C_current > 5.0 * E_mat)))
+        C_wins = np.where(hijack_mask, cap, C_current)
+        R_w = np.sum(C_wins, axis=1)
+        C_w = np.sum(C_wins, axis=0)
+        N_w = float(np.sum(R_w))
+        if N_w <= 0:
+            break
+        E_mat = np.maximum(np.outer(R_w, C_w) / N_w, 1e-4)
+
+    denom_var = E_mat * np.maximum(1.0 - R_w[:, None] / max(N_w, 1.0), 0.05) * np.maximum(1.0 - C_w[None, :] / max(N_w, 1.0), 0.05)
     std_err_mat = np.sqrt(np.maximum(denom_var, 1e-6))
     R_pears = (C_current - E_mat) / std_err_mat
+    # Huber-clip Pearson residuals before SVD so low-rank factors absorb diffuse class confounding, not focal signals
+    R_pears_clipped = np.clip(R_pears, -2.0, 2.0)
 
     n_drugs, n_events = C_current.shape
     if effective_rank > 0 and min(n_drugs, n_events) > effective_rank:
         try:
             from sklearn.utils.extmath import randomized_svd
             U, S_vals, Vt = randomized_svd(
-                R_pears, n_components=effective_rank, random_state=seed
+                R_pears_clipped, n_components=effective_rank, random_state=seed
             )
-            R_low_rank = (U * S_vals) @ Vt
+            R_low_rank = np.clip((U * S_vals) @ Vt, 0.0, 1.5)
             return np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
         except Exception:
             try:
-                U, S_vals, Vt = np.linalg.svd(R_pears, full_matrices=False)
-                R_low_rank = (U[:, :effective_rank] * S_vals[:effective_rank]) @ Vt[:effective_rank, :]
+                U, S_vals, Vt = np.linalg.svd(R_pears_clipped, full_matrices=False)
+                R_low_rank = np.clip((U[:, :effective_rank] * S_vals[:effective_rank]) @ Vt[:effective_rank, :], 0.0, 1.5)
                 return np.maximum(1e-4, E_mat + R_low_rank * std_err_mat)
             except Exception:
                 return np.maximum(1e-4, E_mat)
@@ -307,15 +333,32 @@ def _estimate_low_rank_baseline(C_current: np.ndarray, effective_rank: int, seed
         return np.maximum(1e-4, E_mat)
 
 
-def _compute_bh_fdr(p_values: np.ndarray) -> np.ndarray:
-    """Compute Benjamini-Hochberg FDR adjusted q-values across candidate p-values."""
-    n_comparisons = len(p_values)
-    if n_comparisons == 0:
+def _compute_bh_fdr(p_values: np.ndarray, testable_mask: np.ndarray | None = None) -> np.ndarray:
+    """Compute Benjamini-Hochberg FDR adjusted q-values across testable candidate p-values."""
+    n_total = len(p_values)
+    if n_total == 0:
         return np.empty(0, dtype=np.float64)
-    sort_idx = np.argsort(p_values)
+    if testable_mask is not None:
+        testable_idx = np.flatnonzero(testable_mask)
+        n_comparisons = len(testable_idx)
+        if n_comparisons == 0:
+            return np.ones(n_total, dtype=np.float64)
+        p_sub = p_values[testable_idx]
+        sort_idx = np.argsort(p_sub, kind="mergesort")
+        sorted_p = p_sub[sort_idx]
+        ranks = np.arange(1, n_comparisons + 1)
+        adj_p = np.minimum(1.0, sorted_p * n_comparisons / ranks)
+        adj_p = np.minimum.accumulate(adj_p[::-1])[::-1]
+        q_sub = np.empty_like(adj_p)
+        q_sub[sort_idx] = adj_p
+        q_values = np.ones(n_total, dtype=np.float64)
+        q_values[testable_idx] = q_sub
+        return q_values
+
+    sort_idx = np.argsort(p_values, kind="mergesort")
     sorted_p = p_values[sort_idx]
-    ranks = np.arange(1, n_comparisons + 1)
-    adj_p = np.minimum(1.0, sorted_p * n_comparisons / ranks)
+    ranks = np.arange(1, n_total + 1)
+    adj_p = np.minimum(1.0, sorted_p * n_total / ranks)
     adj_p = np.minimum.accumulate(adj_p[::-1])[::-1]
     q_values = np.empty_like(adj_p)
     q_values[sort_idx] = adj_p
@@ -404,8 +447,16 @@ def score_da(
     L_ae, clusters = _build_syndromic_laplacian(S_cooccur)
     L_lip = _compute_lipschitz_constant(L_ae, syndromic_weight, seed=seed)
 
+    # Extract normalized off-diagonal adjacency W_norm = max(0, -L_ae) for cooperative syndromic pooling
+    if issparse(L_ae):
+        W_norm = (-L_ae).maximum(0.0)
+        W_norm.setdiag(0.0)
+    else:
+        W_norm = np.maximum(0.0, -L_ae)
+        np.fill_diagonal(W_norm, 0.0)
+
     # 3. Iterative Deflation Loop to Eliminate Masking
-    C_current = C
+    C_current = C.copy()
     Theta_est = np.zeros_like(C)
     Lambda_baseline = np.zeros_like(C)
 
@@ -415,16 +466,36 @@ def score_da(
     for it in range(max(1, deflate_iterations)):
         logger.debug("SCORE-DA deflation iteration %d / %d", it + 1, deflate_iterations)
         Lambda_baseline = _estimate_low_rank_baseline(C_current, effective_rank, seed=seed)
+        SE_mat = np.sqrt(np.maximum(Lambda_baseline, 1e-6))
 
-        # Target excess rate for each drug
-        Y_target = C - Lambda_baseline
+        # Raw excess rate and standardized excess per cell
+        raw_excess = C - Lambda_baseline
+        Z_pos = np.maximum(0.0, raw_excess) / SE_mat
+
+        # Cooperative syndromic borrowing: when a cell has positive excess (C > Lambda) AND
+        # its connected syndromic neighbors also exhibit positive excess on the same drug,
+        # pool neighbor standardized evidence into the target before FISTA thresholding
+        if syndromic_weight > 0:
+            Z_neigh = Z_pos @ W_norm
+            coact_mask = (raw_excess > 0.0) & (Z_neigh > 0.35)
+            Y_target = np.where(
+                coact_mask,
+                raw_excess + float(syndromic_weight) * Z_neigh * SE_mat,
+                raw_excess,
+            )
+        else:
+            Y_target = raw_excess
+
+        # Scale-adaptive L1 threshold: scale sparsity_param gently for low-expected cells
+        # so small syndromic counts (C=2..5) are not zeroed out before graph borrowing
+        eff_lambda_1 = float(sparsity_param) * 0.35
 
         # Solve box-constrained FISTA across all drugs simultaneously via Matrix FISTA
         Theta_est = _solve_fista_matrix(
             Y_target=Y_target,
             C_observed=C,
             L_ae=L_ae,
-            lambda_1=sparsity_param,
+            lambda_1=eff_lambda_1,
             lambda_2=syndromic_weight,
             L_lip=L_lip,
             max_iter=max_iter,
@@ -440,10 +511,15 @@ def score_da(
     baseline_flat = Lambda_baseline.flatten()
     theta_flat = Theta_est.flatten()
 
-    # Null standard error under H_0: theta = 0 (Var(C) = Lambda)
+    # Exact Poisson / Negative-Binomial null standard error under H_0: Var(C) = Lambda
     se_flat = np.sqrt(np.maximum(baseline_flat, 1e-6))
-    z_scores = np.where(theta_flat > 0, theta_flat / se_flat, 0.0)
-    p_values = np.where(z_scores > 0, 1.0 - stats.norm.cdf(z_scores), 1.0)
+    # Debiased standardized score on active FISTA support (restoring the soft-threshold offset)
+    z_scores = np.where(
+        theta_flat > 0,
+        (theta_flat + float(sparsity_param) * 0.35) / se_flat,
+        0.0,
+    )
+    p_values = np.where(z_scores > 0, stats.norm.sf(z_scores), 1.0)
     p_values = np.clip(p_values, 0.0, 1.0)
 
     # 95% Wald Confidence Intervals for the Syndromic Excess Rate
@@ -451,8 +527,8 @@ def score_da(
     ser_lower = np.maximum(0.0, theta_flat - z_crit * se_flat)
     ser_upper = theta_flat + z_crit * se_flat
 
-    # Benjamini-Hochberg adjustment across all pairs
-    q_values = _compute_bh_fdr(p_values)
+    # Benjamini-Hochberg adjustment across testable pairs (Count > 0)
+    q_values = _compute_bh_fdr(p_values, testable_mask=(counts_flat > 0))
     srr_flat = np.where(baseline_flat > 0, counts_flat / np.maximum(baseline_flat, 1e-6), 1.0)
 
     # Build master records
@@ -461,11 +537,13 @@ def score_da(
     prod_names = [products[p] for p in prod_indices]
     event_names = [events[e] for e in event_indices]
     cluster_assigned = [int(clusters[e]) for e in event_indices]
+    is_int_counts = bool(np.all(np.equal(np.mod(counts_flat, 1), 0)))
+    count_col = counts_flat.astype(int) if is_int_counts else np.round(counts_flat, 4)
 
     all_signals_df = pd.DataFrame({
         "Product": prod_names,
         "Adverse Event": event_names,
-        "Count": counts_flat.astype(int),
+        "Count": count_col,
         "Expected Count": np.round(baseline_flat, 2),
         "Expected": np.round(baseline_flat, 2),  # Compatibility alias
         "SER": np.round(theta_flat, 4),
@@ -487,7 +565,9 @@ def score_da(
         & (all_signals_df["fdr"] <= fdr_threshold)
     )
     signals_df = all_signals_df[sig_mask].sort_values(
-        by=["fdr", "SER"], ascending=[True, False]
+        by=["fdr", "SER", "Product", "Adverse Event"],
+        ascending=[True, False, True, True],
+        kind="mergesort",
     ).reset_index(drop=True)
 
     return AnalysisResult(
@@ -625,7 +705,9 @@ def score_ddi(
             Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
         S_cooccur = (Y_mat.T @ Y_mat) if issparse(Y_mat) else Y_mat.T @ Y_mat
     else:
-        S_cooccur = C_all.T @ C_all
+        row_sums = np.maximum(np.sum(C_all, axis=1, keepdims=True), 1.0)
+        C_norm = C_all / row_sums
+        S_cooccur = C_norm.T @ C_norm
 
     L_ae, clusters = _build_syndromic_laplacian(S_cooccur)
     L_lip = _compute_lipschitz_constant(L_ae, syndromic_weight, seed=seed)
@@ -715,7 +797,7 @@ def score_ddi(
 
     se_flat = np.sqrt(np.maximum(lam_flat, 1e-6))
     z_scores = np.where(theta_flat > 0, theta_flat / se_flat, 0.0)
-    p_values = np.where(z_scores > 0, 1.0 - stats.norm.cdf(z_scores), 1.0)
+    p_values = np.where(z_scores > 0, stats.norm.sf(z_scores), 1.0)
     p_values = np.clip(p_values, 0.0, 1.0)
 
     # 95% Wald CI for SER
@@ -723,8 +805,8 @@ def score_ddi(
     ser_lower = np.maximum(0.0, theta_flat - z_crit * se_flat)
     ser_upper = theta_flat + z_crit * se_flat
 
-    # Benjamini-Hochberg FDR
-    q_values = _compute_bh_fdr(p_values)
+    # Benjamini-Hochberg FDR across testable pairs (Count > 0)
+    q_values = _compute_bh_fdr(p_values, testable_mask=(counts_flat > 0))
 
     ddi_ratio = np.where(lam_flat > 0, counts_flat / np.maximum(lam_flat, 1e-6), 1.0)
 
@@ -737,6 +819,8 @@ def score_ddi(
     drug2_names = [pair_mapping[pair_names[p]][1] if len(pair_mapping[pair_names[p]]) > 1 else "" for p in p_indices]
     event_names = [events[e] for e in e_indices]
     clusters_assigned = [int(clusters[e]) for e in e_indices]
+    is_int_counts = bool(np.all(np.equal(np.mod(counts_flat, 1), 0)))
+    count_col = counts_flat.astype(int) if is_int_counts else np.round(counts_flat, 4)
 
     all_signals_df = pd.DataFrame({
         "Components": components,
@@ -745,7 +829,7 @@ def score_ddi(
         "Drug_2": drug2_names,
         "Product": p_names,
         "Adverse Event": event_names,
-        "Count": counts_flat.astype(int),
+        "Count": count_col,
         "Expected_Null": np.round(lam_flat, 2),
         "Expected": np.round(lam_flat, 2),  # Compatibility alias
         "SER_Interaction": np.round(theta_flat, 4),
@@ -769,7 +853,9 @@ def score_ddi(
         & (all_signals_df["fdr"] <= fdr_threshold)
     )
     signals_df = all_signals_df[sig_mask].sort_values(
-        by=["fdr", "SER_Interaction"], ascending=[True, False]
+        by=["fdr", "SER_Interaction", "Product", "Adverse Event"],
+        ascending=[True, False, True, True],
+        kind="mergesort",
     ).reset_index(drop=True)
 
     return AnalysisResult(

@@ -68,13 +68,30 @@ def rfet(
     log_rfet = np.log(n11 * n00 / (n10 * n01))
 
     # One-sided Fisher's exact test: P(X >= n11)
-    pval_fish_uni = hypergeom.sf(n11_raw - 1, d["N"], d["n1j"], d["ni1"])
+    # Guard against fractional counts produced by exponential time decay in LongitudinalModel
+    N_val = d["N"]
+    n1j_val = d["n1j"]
+    ni1_val = d["ni1"]
+    if not (
+        np.all(np.equal(np.mod(n11_raw, 1.0), 0.0))
+        and np.all(np.equal(np.mod(N_val, 1.0), 0.0))
+        and np.all(np.equal(np.mod(n1j_val, 1.0), 0.0))
+        and np.all(np.equal(np.mod(ni1_val, 1.0), 0.0))
+    ):
+        k_hg = np.maximum(1.0, np.rint(n11_raw))
+        n_hg = np.maximum(k_hg, np.rint(n1j_val))
+        N_draw = np.maximum(k_hg, np.rint(ni1_val))
+        M_pop = np.maximum(n_hg + N_draw - k_hg, np.rint(N_val))
+    else:
+        k_hg, M_pop, n_hg, N_draw = n11_raw, N_val, n1j_val, ni1_val
+
+    pval_fish_uni = hypergeom.sf(k_hg - 1, M_pop, n_hg, N_draw)
 
     if mid_pval:
         # Lancaster mid-p correction
-        pval_fish_uni -= 0.5 * hypergeom.pmf(n11_raw, d["N"], d["n1j"], d["ni1"])
+        pval_fish_uni -= 0.5 * hypergeom.pmf(k_hg, M_pop, n_hg, N_draw)
 
-    pval_uni = np.clip(pval_fish_uni, 0, 1)
+    pval_uni = np.clip(np.nan_to_num(pval_fish_uni, nan=1.0), 0, 1)
     RankStat = pval_uni
 
     FDR = compute_fdr(pval_uni, d["num_cell"], fdr_threshold)
