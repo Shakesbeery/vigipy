@@ -10,7 +10,7 @@
 > - **Zero-Inflated Gamma-Poisson Shrinker (`zigps` / `ZIGPSConfig`)**: 3-component Spike-and-Slab Empirical Bayes mixture ($\pi_0 \delta_0(\lambda) + (1-\pi_0)[P \cdot \text{Gamma}_1 + (1-P) \cdot \text{Gamma}_2]$) isolating structural drug–event zeros from the continuous Gamma slab.
 > - **Sequential Change-Point Surveillance (`maxsprt` / `cusum_da`)**: Kulldorff's Maximized Sequential Probability Ratio Test (Poisson & Binomial models) and Lucas/Page Poisson log-likelihood-ratio CUSUM with Siegmund $\text{ARL}_0$ calibration.
 > - **SCORE-DA & Core Numerical Hardening**: Chance-corrected top-$K$ Jaccard graph sharpening, iterative LOCO Winsorization + Huber-clipped SVD, debiased FISTA inference, and log-space / survival-function precision across `GPS`, `RFET`, `LASSO`, and `common`.
-> - **High-Performance Longitudinal Engine & Time Decay**: Continuous exponential half-life time decay (`decay_half_life`), $O(N)$ incremental accumulation via semigroup scaling, and $O(1)$ constant-memory surveillance.
+> - **High-Performance Longitudinal Engine & Time Decay (v3.4.2)**: Continuous exponential half-life time decay (`decay_half_life`), $O(N)$ incremental accumulation via semigroup scaling, and $O(1)$ constant-memory surveillance.
 
 ---
 
