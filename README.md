@@ -6,10 +6,10 @@
 
 > [!IMPORTANT]
 > **What's New in `vigipy` (v3.5.0)**
-> - **AEGIS (`aegis` / `AEGISConfig`)**: **A**nytime **E**mpirical **G**raph-**I**nformed **S**hrinkage — a state-of-the-art 4-pillar pharmacovigilance engine uniting Leave-One-Cell-Out (LOCO) Sinkhorn-Huber blockbuster unmasking, top-$K$ NPMI syndromic graph coherence, exposure-normalized Dual-EWMA surge velocity (immune to media notoriety waves), and anytime-valid mixture martingale $e$-values (`e_value`, `AEGIS_EBGM`, `AEGIS_LB`).
-> - **Zero-Inflated Gamma-Poisson Shrinker (`zigps` / `ZIGPSConfig`)**: 3-component Spike-and-Slab Empirical Bayes mixture ($\pi_0 \delta_0(\lambda) + (1-\pi_0)[P \cdot \text{Gamma}_1 + (1-P) \cdot \text{Gamma}_2]$) isolating structural drug–event zeros from the continuous Gamma slab.
+> - **AEGIS (`aegis` / `AEGISConfig`)**: **A**nytime **E**mpirical **G**raph-**I**nformed **S**hrinkage — a state-of-the-art 4-pillar pharmacovigilance engine uniting Leave-One-Cell-Out (LOCO) Sinkhorn-Huber blockbuster unmasking, $\text{top-}K$ NPMI syndromic graph coherence, exposure-normalized Dual-EWMA surge velocity (immune to media notoriety waves), and anytime-valid mixture martingale $e$-values (`e_value`, `AEGIS_EBGM`, `AEGIS_LB`).
+> - **Zero-Inflated Gamma-Poisson Shrinker (`zigps` / `ZIGPSConfig`)**: 3-component Spike-and-Slab Empirical Bayes mixture ($\pi\_0 \delta\_0(\lambda) + (1-\pi\_0)[P \cdot \text{Gamma}\_1 + (1-P) \cdot \text{Gamma}\_2]$) isolating structural drug–event zeros from the continuous Gamma slab.
 > - **Sequential Change-Point Surveillance (`maxsprt` / `cusum_da`)**: Kulldorff's Maximized Sequential Probability Ratio Test (Poisson & Binomial models) and Lucas/Page Poisson log-likelihood-ratio CUSUM with Siegmund $\text{ARL}_0$ calibration.
-> - **SCORE-DA & Core Numerical Hardening**: Chance-corrected top-$K$ Jaccard graph sharpening, iterative LOCO Winsorization + Huber-clipped SVD, debiased FISTA inference, and log-space / survival-function precision across `GPS`, `RFET`, `LASSO`, and `common`.
+> - **SCORE-DA & Core Numerical Hardening**: Chance-corrected $\text{top-}K$ Jaccard graph sharpening, iterative LOCO Winsorization + Huber-clipped SVD, debiased FISTA inference, and log-space / survival-function precision across `GPS`, `RFET`, `LASSO`, and `common`.
 > - **High-Performance Longitudinal Engine & Time Decay (v3.4.2)**: Continuous exponential half-life time decay (`decay_half_life`), $O(N)$ incremental accumulation via semigroup scaling, and $O(1)$ constant-memory surveillance.
 
 ---
@@ -207,11 +207,11 @@ ddi_res = analyze(ddi_container, SCOREDDIConfig(interaction_model="multiplicativ
 ### Method Deep-Dives
 
 #### AEGIS: Anytime Empirical Graph-Informed Shrinkage
-Classical Empirical Bayes shrinkers (`GPS`, `BCPNN`) evaluate each drug–event cell in isolation—shrinking emerging signals when counts are small ($n = 2\text{–}5$) while remaining vulnerable to blockbuster masking, media-driven notoriety surges, and sequential peeking inflation. `vigipy.aegis()` addresses all four failure modes:
-1. **Counterfactual LOCO Sinkhorn-Huber Baseline**: Initializes Leave-One-Cell-Out (LOCO) marginals in $O(1)$ operations to break self-cloaking fixed points, then iteratively Winsorizes extreme spikes with analytical Gaussian upper-tail bias correction ($\phi(\delta) - \delta \Phi(-\delta)$) and applies Huber-clipped SVD to absorb diffuse indication confounding (`B_Counterfactual`, `Unmasking_Ratio`).
-2. **NPMI Syndromic Graph & Conjugate Poisson-Gamma Pooling**: Constructs a degree-regularized, top-$K$ pruned Normalized Pointwise Mutual Information (NPMI) symptom graph. When connected symptoms in a clinical syndrome co-activate on the same drug, a logistic context gate elevates the cell-specific signal prior $\pi_{ji}$ and pools conjugate pseudo-observations $(\Delta C_{ji}, \Delta B_{ji})$ into both the Gamma shape and rate parameters (`AEGIS_EBGM`, `AEGIS_LB`, `Syndromic_Coherence`).
+Classical Empirical Bayes shrinkers (`GPS`, `BCPNN`) evaluate each drug–event cell in isolation—shrinking emerging signals when counts are small ($n \in [2, 5]$) while remaining vulnerable to blockbuster masking, media-driven notoriety surges, and sequential peeking inflation. `vigipy.aegis()` addresses all four failure modes:
+1. **Counterfactual LOCO Sinkhorn-Huber Baseline**: Initializes Leave-One-Cell-Out (LOCO) marginals in $O(1)$ operations to break self-cloaking fixed points, then iteratively Winsorizes extreme spikes with analytical Gaussian upper-tail bias correction $(\phi(\delta) - \delta \Phi(-\delta))$ and applies Huber-clipped SVD to absorb diffuse indication confounding (`B_Counterfactual`, `Unmasking_Ratio`).
+2. **NPMI Syndromic Graph & Conjugate Poisson-Gamma Pooling**: Constructs a degree-regularized, $\text{top-}K$ pruned Normalized Pointwise Mutual Information (NPMI) symptom graph. When connected symptoms in a clinical syndrome co-activate on the same drug, a logistic context gate elevates the cell-specific signal prior $\pi_{ji}$ and pools conjugate pseudo-observations $(\Delta C_{ji}, \Delta B_{ji})$ into both the Gamma shape and rate parameters (`AEGIS_EBGM`, `AEGIS_LB`, `Syndromic_Coherence`).
 3. **Exposure-Normalized Dual-EWMA Surge Velocity**: Applies a continuous exponential moving kernel over the report sequence and normalizes recent counts against the drug's recent reporting share $C_{\text{fast}, ji} / R_{\text{fast}, j}$. Drug-wide media notoriety waves inflate $C_{ji}$ and $R_j$ proportionally (yielding `Surge_Velocity ≈ 0`), whereas focal biological hazards exhibit strong positive velocity.
-4. **Anytime-Valid Vovk–Wang Product Martingale $e$-Values**: Evaluates Wald-Poisson mixture martingales on true counts $(C_{ji}, B_{ji})$ and couples them with leave-one-out neighborhood $e$-values via Vovk & Wang's (2021) product martingale identity (`e_value`, `anytime_p_value`, `e_fdr`), satisfying Ville's inequality $\mathbb{P}_0(\exists t : E_{ji}(t) \ge 1/\alpha) \le \alpha$ under continuous quarterly peeking.
+4. **Anytime-Valid Vovk–Wang Product Martingale $e$-Values**: Evaluates Wald-Poisson mixture martingales on true counts $(C_{ji}, B_{ji})$ and couples them with leave-one-out neighborhood $e$-values via Vovk & Wang's (2021) product martingale identity (`e_value`, `anytime_p_value`, `e_fdr`), satisfying Ville's inequality $\mathbb{P}\_0(\exists t : E\_{ji}(t) \ge 1/\alpha) \le \alpha$ under continuous quarterly peeking.
 
 ```python
 aegis_res = vg.aegis(
@@ -229,7 +229,7 @@ print(aegis_res.signals[[
 ```
 
 #### ZIGPS: Zero-Inflated Gamma-Poisson Shrinker
-In large spontaneous reporting matrices where $>80\%$ of drug–event cells are zero (due to non-overlapping clinical populations or impossible indication pairs), fitting a standard 2-Gamma prior (`GPS`) forces the lower Gamma component toward zero, artificially inflating posterior relative risks on small counts. `vigipy.zigps()` introduces an explicit point-mass spike $\pi_0 \delta_0(\lambda)$ alongside the two-component Gamma slab.
+In large spontaneous reporting matrices where 80% of drug–event cells are zero (due to non-overlapping clinical populations or impossible indication pairs), fitting a standard 2-Gamma prior (`GPS`) forces the lower Gamma component toward zero, artificially inflating posterior relative risks on small counts. `vigipy.zigps()` introduces an explicit point-mass spike $\pi_0 \delta_0(\lambda)$ alongside the two-component Gamma slab.
 
 ```python
 zigps_res = vg.zigps(
@@ -265,7 +265,7 @@ print(result.signals[["Product", "Adverse Event", "Count", "aROR", "CI Lower", "
 #### SCORE-DA: Syndromic Cellwise Outlier & Residual Estimation
 Traditional disproportionality methods assume independence across symptom columns and suffer from **blockbuster masking** and **indication confounding**.
 * **Indication Absorption**: Uses LOCO-initialized iterative Winsorization and Huber-clipped Truncated SVD on standardized Pearson residuals to absorb shared drug-class and indication baselines without absorbing focal signals.
-* **Syndromic Borrowing**: Builds a chance-corrected, top-$K$ sharpened Graph Laplacian ($\mathbf{L}_{\text{AE}}$) from co-occurring symptoms, allowing related events in a syndrome (e.g. *Urticaria + Angioedema + Hypotension*) to borrow strength without relying on external ontologies.
+* **Syndromic Borrowing**: Builds a chance-corrected, $\text{top-}K$ sharpened Graph Laplacian ($\mathbf{L}_{\text{AE}}$) from co-occurring symptoms, allowing related events in a syndrome (e.g. *Urticaria + Angioedema + Hypotension*) to borrow strength without relying on external ontologies.
 * **Masking Deflation**: Iteratively deflates detected signals to unmask hidden safety signals suppressed by blockbuster drugs.
 
 ```python
@@ -280,7 +280,7 @@ print(score_res.signals[["Product", "Adverse Event", "Count", "SER", "SRR", "fdr
 ```
 
 #### SCORE-DDI: Drug-Drug & Multi-Drug Interaction Discovery
-* **Unbiased Solo Baselines**: When evaluating combinations, `score_ddi` subtracts co-prescription counts ($C_1 - C_{\text{combo}}$) so the combination's toxicity cannot artificially inflate the single-drug baseline.
+* **Unbiased Solo Baselines**: When evaluating combinations, `score_ddi` subtracts co-prescription counts $(C_1 - C_{\text{combo}})$ so the combination's toxicity cannot artificially inflate the single-drug baseline.
 * **Higher-Order Regimens**: Evaluates pairs ($k=2$), triplets ($k=3$), and custom regimens.
 * **Epidemiological Archetype Classification**:
   - `EMERGENT`: Toxicity appears exclusively upon combination (neither drug active alone).
@@ -383,13 +383,13 @@ print(df_panel.head())
 
 | Scenario | Recommended Workflow | Key Parameters |
 | :--- | :--- | :--- |
-| **Routine regulatory submission (FDA / EMA)** | `vg.convert()` $\rightarrow$ `vg.ror()` or `vg.prr()` | `min_events=3`, `ranking_statistic="CI"` |
-| **Automated screening across large database** | `vg.convert()` $\rightarrow$ `vg.zigps()`, `vg.gps()`, or `vg.bcpnn()` | `ranking_statistic="quantile"`, `decision_metric="fdr"` |
-| **Early syndromic signals, blockbuster unmasking & media notoriety immunity** | `vg.convert_binary()` $\rightarrow$ `vg.aegis()` | `fdr_threshold=0.05`, `lb_threshold=1.05`, `decision_metric="combined"` |
+| **Routine regulatory submission (FDA / EMA)** | `vg.convert()` → `vg.ror()` or `vg.prr()` | `min_events=3`, `ranking_statistic="CI"` |
+| **Automated screening across large database** | `vg.convert()` → `vg.zigps()`, `vg.gps()`, or `vg.bcpnn()` | `ranking_statistic="quantile"`, `decision_metric="fdr"` |
+| **Early syndromic signals, blockbuster unmasking & media notoriety immunity** | `vg.convert_binary()` → `vg.aegis()` | `fdr_threshold=0.05`, `lb_threshold=1.05`, `decision_metric="combined"` |
 | **Continuous sequential surveillance (repeated quarterly peeking)** | `vg.aegis(decision_metric="e_value")`, `vg.maxsprt()`, or `vg.cusum_da()` | `alpha=0.05` / `arl0=500.0` |
-| **High polypharmacy / co-prescription confounding** | `vg.convert_binary(sparse=True)` $\rightarrow$ `vg.lasso()` | `relaxed=True`, `covariate_labels=["age", "sex"]` |
-| **Ultra-fast frequentist syndromic screening** | `vg.convert_binary()` $\rightarrow$ `vg.score_da()` | `latent_rank=5`, `syndromic_weight=0.5` |
-| **Investigating drug-drug or multi-drug interactions** | `vg.convert_ddi(max_order=2)` $\rightarrow$ `vg.score_ddi()` | `min_co_reports=5`, `interaction_model="multiplicative"` |
+| **High polypharmacy / co-prescription confounding** | `vg.convert_binary(sparse=True)` → `vg.lasso()` | `relaxed=True`, `covariate_labels=["age", "sex"]` |
+| **Ultra-fast frequentist syndromic screening** | `vg.convert_binary()` → `vg.score_da()` | `latent_rank=5`, `syndromic_weight=0.5` |
+| **Investigating drug-drug or multi-drug interactions** | `vg.convert_ddi(max_order=2)` → `vg.score_ddi()` | `min_co_reports=5`, `interaction_model="multiplicative"` |
 | **Multi-method signal arbitration & triage** | `vg.consensus_analysis()` | `min_consensus=3` or `min_consensus=0.6` |
 | **Monitoring signal emergence over time** | `vg.LongitudinalModel()` | `time_unit="QE"`, `warm_start=True`, `decay_half_life="365D"` |
 
