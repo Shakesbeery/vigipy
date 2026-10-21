@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from itertools import chain, combinations
 from collections import Counter, defaultdict
 from typing import Optional, Union
