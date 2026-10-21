@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from itertools import chain, combinations
 from collections import Counter, defaultdict
 from typing import Optional, Union
@@ -10,34 +12,23 @@ from .Container import DataContainer
 
 
 def convert(
-    data_frame,
-    margin_threshold=1,
-    product_label="name",
-    count_label="count",
-    ae_label="AE",
-):
-    """
-    Convert a Pandas dataframe object into a container class for use
-    with the disproportionality analyses. Column names in the DataFrame
-    must include or be specified in the arguments:
-        "name" -- A brand/generic name for the product. This module
-                    expects that you have already cleaned the data
-                    so there is only one name associated with a class.
-        "AE" -- The adverse event(s) associated with a drug/device.
-        "count" -- The number of AEs associated with that drug/device
-                    and AE. You can input a sheet with single counts
-                    (i.e. duplicate rows) or pre-aggregated counts.
+    data_frame: pd.DataFrame,
+    margin_threshold: int = 1,
+    product_label: str = "name",
+    count_label: str = "count",
+    ae_label: str = "AE",
+) -> DataContainer:
+    """Convert a DataFrame into a DataContainer for disproportionality analysis.
 
-    Arguments:
-        data_frame (Pandas DataFrame): The Pandas DataFrame object
-
-        margin_threshold (int): The threshold for counts. Lower numbers will
-                             be removed from consideration
+    Parameters:
+        data_frame: Pandas DataFrame containing product names, adverse events, and counts.
+        margin_threshold: Minimum row and column marginal count required to retain a category.
+        product_label: Column name containing product/drug names (default: "name").
+        count_label: Column name containing report counts (default: "count").
+        ae_label: Column name containing adverse event names (default: "AE").
 
     Returns:
-        RES (DataStorage object): A container object that holds the necessary
-                                    components for DA.
-
+        DataContainer: Initialized container holding the contingency table and flattened data.
     """
     data_cont = compute_contingency(data_frame, product_label, count_label, ae_label, margin_threshold)
     col_sums = np.sum(data_cont, axis=0)
@@ -141,39 +132,31 @@ def compute_contingency(data_frame, product_label, count_label, ae_label, margin
 
 
 def convert_binary(
-    data,
-    product_label="name",
-    ae_label="AE",
-    use_counts=False,
-    count_label="count",
-    expand_counts=True,
-    report_id_label=None,
-    sparse=False,
-    covariate_labels=None,
-):
-    """Convert input data consisting of unique product-event pairs into a
-       binary dataframe indicating which event and which product are
-       associated with each other.
+    data: pd.DataFrame,
+    product_label: str = "name",
+    ae_label: str = "AE",
+    use_counts: bool = False,
+    count_label: str = "count",
+    expand_counts: bool = True,
+    report_id_label: str | None = None,
+    sparse: bool = False,
+    covariate_labels: list[str] | None = None,
+) -> DataContainer:
+    """Convert input data into a DataContainer with binary indicator matrices.
 
-    Args:
-        data (pd.DataFrame): A DataFrame consisting of unique product-event pairs for each row
-        product_label (str, optional): If the product name is not in a column called `name`, override here. Defaults to "name".
-        ae_label (str, optional): If the adverse event is not in a column called `AE`, override here.. Defaults to "AE".
-        use_counts (bool, optional): Whether to use aggregated count representation. Defaults to False.
-        count_label (str, optional): Column name containing counts. Defaults to "count".
-        expand_counts (bool, optional): Whether to expand counts > 1 into duplicate rows. Defaults to True.
-        report_id_label (str, optional): Column name for report/patient IDs. When specified, groups co-reported
-            products and adverse events at the individual report level. Defaults to None.
-        sparse (bool, optional): If True, construct sparse CSR-backed DataFrames to reduce memory
-            for large datasets. Defaults to False.
-        covariate_labels (list[str], optional): Column names for per-report covariates (e.g. ['age', 'sex']).
-            Requires report_id_label. Continuous covariates are standardized, categorical are
-            one-hot encoded with drop_first=True. Defaults to None.
+    Parameters:
+        data: DataFrame containing product-event associations.
+        product_label: Column name containing product/drug names (default: "name").
+        ae_label: Column name containing adverse event names (default: "AE").
+        use_counts: Whether to use aggregated count representation (default: False).
+        count_label: Column name containing counts (default: "count").
+        expand_counts: Whether to expand counts > 1 into individual rows (default: True).
+        report_id_label: Column name for patient/report IDs to group co-reported items.
+        sparse: If True, construct memory-efficient CSR-backed sparse matrices.
+        covariate_labels: Optional list of column names for per-report covariates.
 
     Returns:
-        Container: A container with two binary dataframes. One is the X data of product names and the other is the
-        y data with adverse events. Index locations are associated with the input DataFrame.
-
+        DataContainer: Initialized container holding product feature matrix X and event outcome matrix Y.
     """
     if covariate_labels is not None and report_id_label is None:
         raise ValueError(
@@ -255,19 +238,24 @@ def convert_binary(
     )
 
 
-def convert_multi_item(df, product_label=None, ae_label="AE", count_label="count", min_threshold=3):
-    """***WARNING*** Currently experimental and not guaranteed to perform as expected.
-    Convert data with multiple product columns into a multi-item flattened dataframe for the DA methods.
+def convert_multi_item(
+    df: pd.DataFrame,
+    product_label: list[str] | None = None,
+    ae_label: str = "AE",
+    count_label: str = "count",
+    min_threshold: int = 3,
+) -> DataContainer:
+    """Convert data with multiple product columns into a multi-item DataContainer.
 
-    Args:
-        df (pd.DataFrame): A dataframe where each row is a unique adverse event and has multiple columns
-        indicating the presence of multiple devices/drugs/interventions.
-        product_label (list, optional): A list of column names associated with the co-occuring products. Defaults to ["name"].
-        ae_label (str, optional): The column name that contains the adverse events. Defaults to "AE".
-        min_threshold (int, optional): The minimum number of events required to keep a drug/device-event pair.
+    Parameters:
+        df: DataFrame where each row contains adverse events and multiple product columns.
+        product_label: List of column names for co-occurring products (default: ["name"]).
+        ae_label: Column name for adverse events (default: "AE").
+        count_label: Column name containing event counts (default: "count").
+        min_threshold: Minimum number of events required to keep a drug/device-event pair.
 
     Returns:
-        Container: A container object that holds the necessary components for DA.
+        DataContainer: Initialized container holding multi-item combinations and contingency tables.
     """
     if product_label is None:
         product_label = ["name"]

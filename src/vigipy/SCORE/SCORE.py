@@ -187,29 +187,9 @@ def _build_syndromic_laplacian(
     L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
 
     # Spectral syndrome clustering: use Fiedler vector / second smallest eigenvector
-    try:
-        if n_events >= 4:
-            from scipy.sparse.linalg import eigsh
-            k = min(3, n_events - 1)
-            vals, vecs = eigsh(csr_matrix(L_norm), k=k, which="SM")
-            sort_order = np.argsort(vals)
-            vals = vals[sort_order]
-            vecs = vecs[:, sort_order]
-            if k >= 3:
-                v1 = vecs[:, 1]
-                v2 = vecs[:, 2]
-                clusters = (v1 > 0).astype(int) + 2 * (v2 > 0).astype(int)
-            elif k >= 2:
-                clusters = (vecs[:, 1] > 0).astype(int)
-            else:
-                clusters = np.zeros(n_events, dtype=int)
-        elif n_events > 1:
-            vals, vecs = np.linalg.eigh(L_norm)
-            clusters = (vecs[:, 1] > 0).astype(int) if len(vals) > 1 else np.zeros(n_events, dtype=int)
-        else:
-            clusters = np.zeros(n_events, dtype=int)
-    except Exception:
-        clusters = np.zeros(n_events, dtype=int)
+    from ..utils.common import spectral_syndrome_clusters
+
+    clusters = spectral_syndrome_clusters(W, n_clusters_max=4)
 
     if n_events > 500:
         L_norm = csr_matrix(L_norm)
@@ -221,40 +201,9 @@ def _extract_matrices_from_container(
     container: DataContainer,
 ) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
     """Extract contingency matrix C (drugs x AEs) and AE co-occurrence matrix S (AEs x AEs)."""
-    if container.type in ("binary", "binary_report", "binary_count", "binary_ddi"):
-        X_df = container.product_features
-        Y_df = container.event_outcomes
-        products = list(X_df.columns)
-        events = list(Y_df.columns)
+    from ..utils.common import extract_contingency_and_cooccurrence
 
-        if hasattr(X_df, "sparse") or issparse(X_df):
-            X_mat = X_df.sparse.to_coo().tocsr() if hasattr(X_df, "sparse") else X_df.tocsr()
-        else:
-            X_mat = np.ascontiguousarray(X_df.values, dtype=np.float64)
-
-        if hasattr(Y_df, "sparse") or issparse(Y_df):
-            Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
-        else:
-            Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
-
-        if issparse(X_mat) or issparse(Y_mat):
-            C = (X_mat.T @ Y_mat).toarray()
-            S_cooccur = (Y_mat.T @ Y_mat)
-        else:
-            C = X_mat.T @ Y_mat
-            S_cooccur = Y_mat.T @ Y_mat
-
-    elif container.type == "contingency":
-        cont = container.contingency
-        products = list(cont.index)
-        events = list(cont.columns)
-        C = np.ascontiguousarray(cont.values, dtype=np.float64)
-        row_sums = np.maximum(np.sum(C, axis=1, keepdims=True), 1.0)
-        C_norm = C / row_sums
-        S_cooccur = C_norm.T @ C_norm
-    else:
-        raise ValueError(f"Unsupported container type '{container.type}' for SCORE.")
-
+    C, S_cooccur, _, products, events, _ = extract_contingency_and_cooccurrence(container)
     return C, S_cooccur, products, events
 
 

@@ -45,8 +45,12 @@ def extract_contingency_data(
     Returns a dict with keys: DATA, N, n11, n1j, ni1, num_cell, expected,
     n10, n01, n00, n11_raw.
     """
-    DATA = container.data
-    N = container.N
+    if "events" not in container.data.columns and hasattr(container, "ensure_flattened_data"):
+        DATA = container.ensure_flattened_data()
+        N = container.N
+    else:
+        DATA = container.data
+        N = container.N
 
     if min_events > 1:
         DATA = DATA[DATA.events >= min_events]
@@ -407,3 +411,187 @@ def build_bayesian_result(
         num_signals=num_signals,
         params=params,
     )
+
+
+def compute_bh_fdr(
+    p_values: np.ndarray,
+    testable_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Compute step-up Benjamini-Hochberg False Discovery Rate (FDR) q-values.
+
+    Parameters:
+        p_values: 1D array of p-values.
+        testable_mask: Optional boolean mask specifying which pairs to include in the
+            multiplicity correction (e.g. Count > 0). Untestable pairs are assigned q=1.0.
+
+    Returns:
+        1D array of monotonic FDR q-values aligned to the input p_values array.
+    """
+    n_total = len(p_values)
+    if n_total == 0:
+        return np.empty(0, dtype=np.float64)
+
+    if testable_mask is not None:
+        idx = np.flatnonzero(testable_mask)
+        m = len(idx)
+        if m == 0:
+            return np.ones(n_total, dtype=np.float64)
+        p_sub = p_values[idx]
+        order = np.argsort(p_sub, kind="mergesort")
+        sorted_p = p_sub[order]
+        ranks = np.arange(1, m + 1)
+        adj = np.minimum(1.0, sorted_p * m / ranks)
+        adj = np.minimum.accumulate(adj[::-1])[::-1]
+        q_sub = np.empty_like(adj)
+        q_sub[order] = adj
+        q_all = np.ones(n_total, dtype=np.float64)
+        q_all[idx] = q_sub
+        return q_all
+
+    order = np.argsort(p_values, kind="mergesort")
+    sorted_p = p_values[order]
+    ranks = np.arange(1, n_total + 1)
+    adj = np.minimum(1.0, sorted_p * n_total / ranks)
+    adj = np.minimum.accumulate(adj[::-1])[::-1]
+    q_all = np.empty_like(adj)
+    q_all[order] = adj
+    return q_all
+
+
+def spectral_syndrome_clusters(
+    W_sym: np.ndarray,
+    n_clusters_max: int = 4,
+) -> np.ndarray:
+    """Assign syndrome clusters via normalized Laplacian Fiedler spectral partitioning.
+
+    Parameters:
+        W_sym: Symmetric affinity/adjoining matrix across adverse events (I x I).
+        n_clusters_max: Maximum number of spectral clusters to form.
+
+    Returns:
+        1D integer array of cluster assignments (length I).
+    """
+    n_events = W_sym.shape[0]
+    clusters = np.zeros(n_events, dtype=int)
+    if n_events <= 1:
+        return clusters
+
+    deg = np.sum(W_sym, axis=1)
+    mask = deg > 0
+    if np.sum(mask) < 2:
+        return clusters
+
+    d_inv_sqrt = np.zeros_like(deg)
+    d_inv_sqrt[mask] = 1.0 / np.sqrt(deg[mask])
+    L_norm = np.diag(mask.astype(np.float64)) - (d_inv_sqrt[:, None] * W_sym * d_inv_sqrt[None, :])
+
+    try:
+        from scipy.sparse import csr_matrix
+        if n_events >= 4:
+            from scipy.sparse.linalg import eigsh
+            k = min(3, n_events - 1)
+            vals, vecs = eigsh(csr_matrix(L_norm), k=k, which="SM")
+            order = np.argsort(vals)
+            vecs = vecs[:, order]
+            if k >= 3:
+                clusters = (vecs[:, 1] > 0).astype(int) + 2 * (vecs[:, 2] > 0).astype(int)
+            else:
+                clusters = (vecs[:, 1] > 0).astype(int)
+        else:
+            vals, vecs = np.linalg.eigh(L_norm)
+            if len(vals) > 1:
+                clusters = (vecs[:, 1] > 0).astype(int)
+    except Exception:
+        clusters = np.zeros(n_events, dtype=int)
+
+    return clusters
+
+
+def extract_contingency_and_cooccurrence(
+    container: DataContainer,
+    fast_window_fraction: float | None = None,
+) -> tuple[np.ndarray, np.ndarray, float, list[str], list[str], np.ndarray | None]:
+    """Extract contingency C, co-occurrence S, total reports N, product/event names, and C_fast.
+
+    Returns:
+        C: Contingency matrix (J products x I events).
+        S_cooccur: AE co-occurrence matrix (I x I).
+        n_rep: Total number of reports or event counts.
+        products: List of product/drug names.
+        events: List of adverse event names.
+        C_fast: Optional exponentially weighted fast-window contingency matrix (J x I).
+    """
+    from scipy.sparse import issparse, csr_matrix
+    import scipy.sparse as sp
+
+    if container.type in ("binary", "binary_report", "binary_count", "binary_ddi"):
+        X_df = container.product_features
+        Y_df = container.event_outcomes
+        products = list(X_df.columns)
+        events = list(Y_df.columns)
+
+        if hasattr(X_df, "sparse") or issparse(X_df):
+            X_mat = X_df.sparse.to_coo().tocsr() if hasattr(X_df, "sparse") else X_df.tocsr()
+        else:
+            X_mat = np.ascontiguousarray(X_df.values, dtype=np.float64)
+
+        if hasattr(Y_df, "sparse") or issparse(Y_df):
+            Y_mat = Y_df.sparse.to_coo().tocsr() if hasattr(Y_df, "sparse") else Y_df.tocsr()
+        else:
+            Y_mat = np.ascontiguousarray(Y_df.values, dtype=np.float64)
+
+        n_rep = float(X_mat.shape[0])
+        if issparse(X_mat) or issparse(Y_mat):
+            C_raw = X_mat.T @ Y_mat
+            C = C_raw.toarray() if issparse(C_raw) else np.asarray(C_raw, dtype=np.float64)
+            S_raw = Y_mat.T @ Y_mat
+            S_cooccur = S_raw.toarray() if issparse(S_raw) else np.asarray(S_raw, dtype=np.float64)
+        else:
+            C = X_mat.T @ Y_mat
+            S_cooccur = Y_mat.T @ Y_mat
+
+        C_fast = None
+        if fast_window_fraction is not None and fast_window_fraction > 0 and X_mat.shape[0] >= 20:
+            n_rows = X_mat.shape[0]
+            if 0.05 <= fast_window_fraction < 1.0:
+                u = np.linspace(1.0 / n_rows, 1.0, n_rows, dtype=np.float64)
+                tau = max(float(fast_window_fraction) * 0.75, 0.05)
+                w_raw = np.exp(-(1.0 - u) / tau)
+                w_fast = w_raw * (float(fast_window_fraction) * n_rows / max(float(np.sum(w_raw)), 1e-12))
+                if issparse(X_mat) or issparse(Y_mat):
+                    X_weighted = csr_matrix(X_mat).multiply(w_fast[:, None])
+                    C_fast_raw = X_weighted.T @ csr_matrix(Y_mat)
+                    C_fast = C_fast_raw.toarray() if issparse(C_fast_raw) else np.asarray(C_fast_raw, dtype=np.float64)
+                else:
+                    C_fast = (X_mat * w_fast[:, None]).T @ Y_mat
+
+    elif container.contingency is not None or hasattr(container, "ensure_contingency"):
+        cont = container.ensure_contingency() if hasattr(container, "ensure_contingency") else container.contingency
+        products = [str(p) for p in cont.index]
+        events = [str(e) for e in cont.columns]
+        C = np.ascontiguousarray(cont.values, dtype=np.float64)
+        n_rep = float(max(container.N, np.sum(C), 1.0))
+
+        cooccur_df = getattr(container, "cooccurrence", None)
+        if cooccur_df is not None and isinstance(cooccur_df, pd.DataFrame):
+            S_cooccur = np.ascontiguousarray(
+                cooccur_df.reindex(index=events, columns=events, fill_value=0.0).values,
+                dtype=np.float64,
+            )
+        else:
+            row_sums = np.maximum(np.sum(C, axis=1, keepdims=True), 1.0)
+            P_cond = C / row_sums
+            col_sums = np.sum(C, axis=0)
+            S_cooccur = (P_cond.T * col_sums[:, None]) @ P_cond
+            np.fill_diagonal(S_cooccur, col_sums)
+
+        C_fast = getattr(container, "fast_contingency", None)
+        if C_fast is not None and isinstance(C_fast, pd.DataFrame):
+            C_fast = np.ascontiguousarray(
+                C_fast.reindex(index=products, columns=events, fill_value=0.0).values,
+                dtype=np.float64,
+            )
+    else:
+        raise ValueError(f"Unsupported container type '{container.type}'.")
+
+    return C, S_cooccur, n_rep, products, events, C_fast

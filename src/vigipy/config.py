@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Union
+from typing import Any, Union
 
 import numpy as np
 
@@ -13,6 +13,11 @@ from .utils.types import (
     FreqRankingStatistic,
     BCPNNRankingStatistic,
     GPSRankingStatistic,
+    AEGISDecisionMetric,
+    MaxSPRTModel,
+    LASSOFamily,
+    LASSODecisionMetric,
+    InteractionModel,
 )
 
 EPS = float(np.finfo(np.float32).eps)
@@ -26,7 +31,26 @@ DEFAULT_GPS_BOUNDS: tuple[tuple[float, float], ...] = (
 
 
 @dataclass(frozen=True)
-class PRRConfig:
+class BaseConfig:
+    """Base class for all vigipy method configuration dataclasses."""
+
+    method: str = ""
+
+    def to_kwargs(self) -> dict[str, Any]:
+        """Return parameters dictionary with 'method' removed, ready for function forwarding."""
+        from dataclasses import asdict
+        params = asdict(self)
+        params.pop("method", None)
+        return params
+
+    def replace(self, **changes: Any) -> BaseConfig:
+        """Return a new configuration instance with updated parameter values."""
+        from dataclasses import replace
+        return replace(self, **changes)
+
+
+@dataclass(frozen=True)
+class PRRConfig(BaseConfig):
     """Configuration for Proportional Reporting Ratio analysis.
 
     Parameters:
@@ -54,7 +78,7 @@ class PRRConfig:
 
 
 @dataclass(frozen=True)
-class RORConfig:
+class RORConfig(BaseConfig):
     """Configuration for Reporting Odds Ratio analysis.
 
     Parameters:
@@ -82,7 +106,7 @@ class RORConfig:
 
 
 @dataclass(frozen=True)
-class RFETConfig:
+class RFETConfig(BaseConfig):
     """Configuration for Reporting Fisher's Exact Test analysis.
 
     RFET uses hypergeometric testing with p-value ranking.
@@ -108,7 +132,7 @@ class RFETConfig:
 
 
 @dataclass(frozen=True)
-class BCPNNConfig:
+class BCPNNConfig(BaseConfig):
     """Configuration for Bayesian Confidence Propagation Neural Network.
 
     Parameters:
@@ -136,7 +160,7 @@ class BCPNNConfig:
 
 
 @dataclass(frozen=True)
-class GPSConfig:
+class GPSConfig(BaseConfig):
     """Configuration for Multi-item Gamma Poisson Shrinkage.
 
     Parameters:
@@ -174,7 +198,7 @@ class GPSConfig:
 
 
 @dataclass(frozen=True)
-class LASSOConfig:
+class LASSOConfig(BaseConfig):
     """Configuration for LASSO regression signal detection.
 
     Parameters:
@@ -190,11 +214,18 @@ class LASSOConfig:
         use_glm: Whether to use Statsmodels L1-penalized Negative Binomial GLM instead of linear LASSO.
         nb_alpha: Dispersion parameter for Negative Binomial GLM.
         lasso_alpha: ElasticNet penalty parameter for GLM fitting.
+        family: Regression family ('logistic', 'linear', or 'negative_binomial').
+        C: Inverse regularization strength for logistic LASSO.
+        decision_metric: Decision rule ('lower_bound' or 'coefficient').
+        use_cv: Whether to tune regularization penalty via cross-validation.
+        cv: Number of cross-validation folds.
+        use_bootstrap: Whether to use bootstrap confidence intervals.
         relaxed: When True and family='logistic', applies two-stage Relaxed LASSO: L1 screening
             followed by unpenalized refit on active features. Produces debiased coefficients and
             more accurate aROR estimates. Default True.
         n_jobs: Number of parallel jobs for fitting across adverse events. Use -1 for all CPUs,
             1 for sequential (default). Only used when family='logistic'.
+        fdr_threshold: Target False Discovery Rate threshold.
     """
 
     method: str = "lasso"
@@ -218,10 +249,11 @@ class LASSOConfig:
     use_bootstrap: bool = False
     relaxed: bool = True
     n_jobs: int = 1
+    fdr_threshold: float = 0.05
 
 
 @dataclass(frozen=True)
-class SCOREConfig:
+class SCOREConfig(BaseConfig):
     """Configuration for SCORE-DA (Syndromic Cellwise Outlier & Residual Estimation).
 
     Parameters:
@@ -251,7 +283,7 @@ class SCOREConfig:
 
 
 @dataclass(frozen=True)
-class SCOREDDIConfig:
+class SCOREDDIConfig(BaseConfig):
     """Configuration for SCORE-DDI (Drug-Drug & Multi-Drug Interaction Discovery).
 
     Parameters:
@@ -279,7 +311,7 @@ class SCOREDDIConfig:
 
 
 @dataclass(frozen=True)
-class ZIGPSConfig:
+class ZIGPSConfig(BaseConfig):
     """Configuration for Zero-Inflated Gamma-Poisson Shrinker (ZIGPS).
 
     Parameters:
@@ -313,13 +345,14 @@ class ZIGPSConfig:
 
 
 @dataclass(frozen=True)
-class MaxSPRTConfig:
+class MaxSPRTConfig(BaseConfig):
     """Configuration for Kulldorff's Maximized Sequential Probability Ratio Test (MaxSPRT).
 
     Parameters:
         alpha: Overall sequential Type I error spending level (default: 0.05).
         min_events: Minimum observed count required to trigger a signal (default: 3).
         upper_limit: Expected count surveillance horizon U for continuous boundary calibration (default: 50.0).
+        upper_rr_cap: Optional cap on relative risk estimate (default: 100.0).
         model: Likelihood model ('poisson' or 'binomial').
         expected_method: Method for expected count calculation ('mantel-haentzel', 'poisson', 'negative-binomial').
         method_alpha: Dispersion parameter for negative-binomial expected method.
@@ -330,6 +363,7 @@ class MaxSPRTConfig:
     alpha: float = 0.05
     min_events: int = 3
     upper_limit: float = 50.0
+    upper_rr_cap: float = 100.0
     model: str = "poisson"
     expected_method: ExpectedMethod = "mantel-haentzel"
     method_alpha: float = 1.0
@@ -337,7 +371,7 @@ class MaxSPRTConfig:
 
 
 @dataclass(frozen=True)
-class CUSUMConfig:
+class CUSUMConfig(BaseConfig):
     """Configuration for Page's Poisson Cumulative Sum (CUSUM) Surveillance.
 
     Parameters:
@@ -359,7 +393,7 @@ class CUSUMConfig:
 
 
 @dataclass(frozen=True)
-class AEGISConfig:
+class AEGISConfig(BaseConfig):
     """Configuration for AEGIS (Anytime Empirical Graph-Informed Shrinkage).
 
     Parameters:
@@ -374,6 +408,8 @@ class AEGISConfig:
         min_npmi: Minimum positive NPMI edge weight to retain in the syndrome graph (default: 0.05).
         syndromic_gain: Logistic gate sensitivity to syndromic coherence (default: 1.50).
         syndromic_coupling: Conjugate Poisson-Gamma neighborhood precision pooling weight (default: 0.60).
+        martingale_coupling: Cross-graph product martingale coupling parameter (default: 0.55).
+        top_k_neighbors: Top-K neighbors per adverse event in syndrome graph (default: 4).
         velocity_gain: Logistic gate sensitivity to Dual-EWMA surge velocity (default: 0.85).
         fast_window_fraction: Effective fraction of recent reports weighted in Dual-EWMA velocity (default: 0.25).
         seed: Random seed for reproducibility (default: 42).
@@ -391,6 +427,8 @@ class AEGISConfig:
     min_npmi: float = 0.05
     syndromic_gain: float = 1.50
     syndromic_coupling: float = 0.60
+    martingale_coupling: float = 0.55
+    top_k_neighbors: int = 4
     velocity_gain: float = 0.85
     fast_window_fraction: float = 0.25
     seed: int = 42

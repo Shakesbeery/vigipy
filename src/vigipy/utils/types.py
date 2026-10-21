@@ -25,3 +25,9 @@ MethodName = Literal[
     "score_ddi",
     "aegis",
 ]
+
+AEGISDecisionMetric = Literal["combined", "lb", "fdr", "e_value"]
+MaxSPRTModel = Literal["poisson", "binomial"]
+LASSOFamily = Literal["logistic", "linear", "negative_binomial"]
+LASSODecisionMetric = Literal["lower_bound", "coefficient"]
+InteractionModel = Literal["multiplicative", "additive"]

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from typing import Any
+from typing import Any, Callable
 
 from .config import (
+    BaseConfig,
     MethodConfig,
     PRRConfig,
     RORConfig,
@@ -23,7 +23,18 @@ from .config import (
 from .utils.Container import AnalysisResult, DataContainer
 from .utils.types import MethodName
 
-_METHOD_REGISTRY: dict[str, type] = {
+from .PRR import prr
+from .ROR import ror
+from .RFET import rfet
+from .BCPNN import bcpnn
+from .GPS import gps
+from .ZIGPS import zigps
+from .Sequential import maxsprt, cusum_da
+from .LASSO import lasso
+from .SCORE import score_da, score_ddi
+from .AEGIS import aegis
+
+_METHOD_REGISTRY: dict[str, type[BaseConfig]] = {
     "prr": PRRConfig,
     "ror": RORConfig,
     "rfet": RFETConfig,
@@ -38,65 +49,68 @@ _METHOD_REGISTRY: dict[str, type] = {
     "aegis": AEGISConfig,
 }
 
+_METHOD_DISPATCH: dict[str, Callable[..., AnalysisResult]] = {
+    "prr": prr,
+    "ror": ror,
+    "rfet": rfet,
+    "bcpnn": bcpnn,
+    "gps": gps,
+    "zigps": zigps,
+    "maxsprt": maxsprt,
+    "cusum": cusum_da,
+    "lasso": lasso,
+    "score": score_da,
+    "score_ddi": score_ddi,
+    "aegis": aegis,
+}
 
-def analyze(container: DataContainer, config: MethodConfig) -> AnalysisResult:
-    """Run a disproportionality analysis using the given configuration.
 
-    This is the unified entry point for all vigipy methods. It dispatches
-    to the underlying function based on the config's method attribute.
+def analyze(
+    container: DataContainer,
+    config: MethodConfig | str,
+    **overrides: Any,
+) -> AnalysisResult:
+    """Run a disproportionality analysis using a configuration instance or method name.
+
+    Parameters:
+        container: A DataContainer holding contingency or binary report data.
+        config: A method configuration dataclass instance (e.g. `PRRConfig()`)
+            or a method name string ('prr', 'ror', 'gps', 'zigps', 'aegis', etc.).
+        **overrides: Optional parameter overrides passed directly to the method.
+
+    Returns:
+        AnalysisResult containing all drug-event pairs, detected signals, and run parameters.
 
     Examples::
 
-        from vigipy import analyze, PRRConfig, BCPNNConfig
-        result = analyze(data, PRRConfig(min_events=3))
-        result = analyze(data, BCPNNConfig(ranking_statistic="quantile"))
+        import vigipy as vg
 
-        # Loop over methods:
-        for cfg in [PRRConfig(), RORConfig(), BCPNNConfig()]:
-            result = analyze(data, cfg)
-            print(f"{cfg.method}: {result.num_signals} signals")
+        # Using a configuration object:
+        result = vg.analyze(data, vg.PRRConfig(min_events=3))
+
+        # Using a method name string with overrides:
+        result = vg.analyze(data, "prr", min_events=3)
     """
-    params = asdict(config)
-    method_name = params.pop("method")
-
-    if method_name == "prr":
-        from .PRR import prr
-        return prr(container, **params)
-    elif method_name == "ror":
-        from .ROR import ror
-        return ror(container, **params)
-    elif method_name == "rfet":
-        from .RFET import rfet
-        return rfet(container, **params)
-    elif method_name == "bcpnn":
-        from .BCPNN import bcpnn
-        return bcpnn(container, **params)
-    elif method_name == "gps":
-        from .GPS import gps
-        return gps(container, **params)
-    elif method_name == "zigps":
-        from .ZIGPS import zigps
-        return zigps(container, **params)
-    elif method_name == "maxsprt":
-        from .Sequential import maxsprt
-        return maxsprt(container, **params)
-    elif method_name == "cusum":
-        from .Sequential import cusum_da
-        return cusum_da(container, **params)
-    elif method_name == "lasso":
-        from .LASSO import lasso
-        return lasso(container, **params)
-    elif method_name == "score":
-        from .SCORE import score_da
-        return score_da(container, **params)
-    elif method_name == "score_ddi":
-        from .SCORE import score_ddi
-        return score_ddi(container, **params)
-    elif method_name == "aegis":
-        from .AEGIS import aegis
-        return aegis(container, **params)
+    if isinstance(config, str):
+        method_key = config.lower()
+        if method_key not in _METHOD_REGISTRY:
+            raise ValueError(f"Unknown method {config!r}. Choose from {list(_METHOD_REGISTRY)}")
+        cfg = _METHOD_REGISTRY[method_key](**overrides)
+    elif isinstance(config, BaseConfig):
+        cfg = config.replace(**overrides) if overrides else config
     else:
+        if hasattr(config, "method"):
+            cfg = config
+        else:
+            raise TypeError(f"Expected MethodConfig instance or method name string, got {type(config)}")
+
+    method_name = cfg.method
+    fn = _METHOD_DISPATCH.get(method_name)
+    if fn is None:
         raise ValueError(f"Unknown method: {method_name!r}")
+
+    params = cfg.to_kwargs() if isinstance(cfg, BaseConfig) else {k: v for k, v in vars(cfg).items() if k != "method"}
+    return fn(container, **params)
 
 
 def analyze_all(
@@ -114,15 +128,12 @@ def analyze_all(
     if configs is None:
         configs = [PRRConfig(), RORConfig(), RFETConfig(), BCPNNConfig(), GPSConfig()]
 
-    results = {}
+    results: dict[str, AnalysisResult] = {}
     for config in configs:
         if shared_overrides:
-            params = asdict(config)
-            params.pop("method")
-            for k, v in shared_overrides.items():
-                if k in params:
-                    params[k] = v
-            config = _METHOD_REGISTRY[config.method](**params)
+            matching = {k: v for k, v in shared_overrides.items() if hasattr(config, k)}
+            if matching:
+                config = config.replace(**matching) if isinstance(config, BaseConfig) else config
         results[config.method] = analyze(container, config)
     return results
 
