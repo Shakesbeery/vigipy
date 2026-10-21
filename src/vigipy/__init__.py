@@ -25,7 +25,7 @@ from .config import (
 logger = logging.getLogger("vigipy")
 logger.addHandler(logging.NullHandler())
 
-__version__ = "3.5.0"
+__version__ = "3.5.1"
 
 __all__ = [
     "__version__",

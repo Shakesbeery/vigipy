@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.5.1
+
+### Added
+- **Universal Container Interoperability**: Automatic on-demand contingency table and flattened data materialization (`ensure_contingency()`, `ensure_flattened_data()`) with attribute forwarding across all `DataContainer` types (Sparse, Binary, MultiItem, DDI).
+- **Standardized `AnalysisResult.summary()`**: Canonical 10-column view (`Product`, `Adverse Event`, `Count`, `Expected Count`, `Metric`, `Score`, `CI Lower`, `CI Upper`, `p_value`, `fdr`) mapping method-specific metrics automatically for both `'signals'` and `'all'`.
+- **Single-Pair Inspection (`inspect_pair`)**: Fast lookup method on `AnalysisResult` returning a `pd.Series` with signal status flag and metrics for an exact (Product, Event) pair.
+- **Direct String Method Dispatch**: Support for method names as strings in `analyze()` (e.g., `vg.analyze(data, "prr", min_events=3)`).
+- **`BaseConfig` Foundation**: Base dataclass with `.to_kwargs()` and `.replace(**changes)` inherited by all 12 configuration dataclasses.
+- **PEP 561 Compliance**: Added `py.typed` marker file for static type checkers.
+
+### Changed
+- **Shared Algorithm Consolidation**: Consolidated contingency/co-occurrence extraction and spectral Graph Laplacian clustering into `common.py`.
+- **Human-Readable Documentation**: Replaced verbose speculative essays in docstrings across methods with standardized, concise documentation, complete parameter blocks, and accurate container return types.
+- **Worker Allocation Efficiency**: Streamlined LASSO parallel worker serialization and vectorized step-up FDR adjustment in `common.compute_bh_fdr()`.
+
+### Fixed
+- Restored `"Pi0_Structural"` column compatibility alias alongside `"StructuralZeroProb"` in `zigps()`.
+- Added `upper_rr_cap` keyword support to `maxsprt()` matching its configuration interface.
+
 ## 3.5.0
 
 ### Added
